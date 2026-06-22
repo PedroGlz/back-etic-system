@@ -4,6 +4,8 @@ import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.CatalogNotSupportedException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -18,6 +20,8 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
 	@ExceptionHandler(CatalogNotSupportedException.class)
 	public ResponseEntity<ApiErrorResponse> handleCatalogNotSupported(
@@ -68,6 +72,7 @@ public class GlobalExceptionHandler {
 		Exception exception,
 		HttpServletRequest request
 	) {
+		LOGGER.error("Error no controlado en {} {}", request.getMethod(), request.getRequestURI(), exception);
 		return build(HttpStatus.INTERNAL_SERVER_ERROR, "Ocurrió un error interno", request, null);
 	}
 
