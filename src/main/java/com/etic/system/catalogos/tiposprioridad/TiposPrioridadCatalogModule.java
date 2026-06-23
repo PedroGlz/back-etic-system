@@ -27,7 +27,7 @@ public class TiposPrioridadCatalogModule implements CatalogModule {
 				booleanField("isDefault", "Default", false)
 			),
 			"id", "Id_Tipo_Prioridad", "name", "Tipo_Prioridad", "description", "Desc_Prioridad",
-			"isDefault", "is_deafult", "status", "Estatus"
+			"isDefault", "is_default", "status", "Estatus"
 		);
 	}
 }
