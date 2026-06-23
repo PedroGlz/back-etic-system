@@ -20,4 +20,8 @@ public final class CatalogDefinitions {
 	public static CatalogField numberField(String name, String label, boolean required) {
 		return new CatalogField(name, label, "number", required, null, null, false);
 	}
+
+	public static CatalogField booleanField(String name, String label, boolean required) {
+		return new CatalogField(name, label, "boolean", required, 1, null, false);
+	}
 }

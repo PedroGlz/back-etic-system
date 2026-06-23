@@ -45,12 +45,6 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class InspectionPackageService {
 
-	private static final List<String> GLOBAL_TABLES = List.of(
-		"causa_principal", "equipos", "estatus_color_text", "estatus_inspeccion", "estatus_inspeccion_det",
-		"fabricantes", "fallas", "fases", "grupos", "cat_observaciones_bl", "referencias_generales",
-		"recomendaciones", "recomendaciones_generales", "severidades", "tipo_ambientes", "tipo_fallas",
-		"tipo_inspecciones", "tipo_prioridades", "usuarios"
-	);
 	private static final Set<String> ALLOWED_IMPORT_PATHS = Set.of(
 		"inspection/inspecciones.json",
 		"inspection/inspecciones_det.json",
@@ -93,7 +87,7 @@ public class InspectionPackageService {
 
 		Map<String, byte[]> entries = new LinkedHashMap<>();
 		Map<String, Object> selectedInspection = singleRow(
-			"SELECT * FROM inspecciones WHERE Id_Inspeccion = ? AND Estatus = 'Activo'",
+			"SELECT * FROM inspecciones WHERE Id_Inspeccion = ?",
 			inspectionId
 		);
 		if (selectedInspection == null) {
@@ -101,7 +95,7 @@ public class InspectionPackageService {
 		}
 
 		Map<String, Object> selectedSite = singleRow(
-			"SELECT * FROM sitios WHERE Id_Sitio = ? AND Estatus = 'Activo'",
+			"SELECT * FROM sitios WHERE Id_Sitio = ?",
 			siteId
 		);
 		if (selectedSite == null) {
@@ -116,12 +110,16 @@ public class InspectionPackageService {
 			throw new BusinessValidationException("No se encontró el contexto completo del sitio para exportar");
 		}
 
-		for (String tableName : GLOBAL_TABLES) {
-			if (!tableExists(tableName)) {
-				continue;
-			}
+		List<String> globalTables = configuredGlobalExportTables();
+		entries.put("globals/export_table_scope.json", jsonBytes(payload(
+			"export_table_scope",
+			"GLOBAL_METADATA",
+			Map.of("enabled", 1, "scope", "GLOBAL"),
+			jdbcTemplate.queryForList("SELECT * FROM export_table_scope WHERE enabled = 1 AND scope = 'GLOBAL'")
+		)));
+		for (String tableName : globalTables) {
 			List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT * FROM " + tableName);
-			entries.put("globals/" + tableName + ".json", jsonBytes(payload(tableName, "GLOBAL", Map.of(), rows, List.of())));
+			entries.put("globals/" + tableName + ".json", jsonBytes(payload(tableName, "GLOBAL", Map.of(), rows)));
 		}
 
 		if (tableExists("inspecciones")) {
@@ -174,7 +172,10 @@ public class InspectionPackageService {
 				"historial_problemas",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM historial_problemas WHERE Id_Sitio = ?", siteId),
+				jdbcTemplate.queryForList(
+					"SELECT * FROM historial_problemas WHERE Id_Problema IN (SELECT Id_Problema FROM problemas WHERE Id_Sitio = ?)",
+					siteId
+				),
 				List.of()
 			)));
 		}
@@ -202,17 +203,22 @@ public class InspectionPackageService {
 
 		Map<String, Object> manifest = new LinkedHashMap<>();
 		manifest.put("package_type", "inspection_export");
-		manifest.put("schema_version", 1);
 		manifest.put("format_version", 1);
-		manifest.put("source", "etic-springboot");
-		manifest.put("generated_at", Instant.now().toString());
-		manifest.put("media_included", false);
-		manifest.put("inspection", Map.of(
-			"id", inspectionId,
-			"site_id", siteId,
-			"inspection_number", selectedInspection.get("No_Inspeccion")
-		));
+		manifest.put("schema_version", 1);
+		manifest.put("source_system", "etic-springboot");
+		manifest.put("target_system", "etic-kotlin");
+		manifest.put("exported_at", Instant.now().toString());
+		manifest.put("file_name", safeFileName);
+		Map<String, Object> manifestInspection = new LinkedHashMap<>();
+		manifestInspection.put("id_inspeccion", Objects.requireNonNullElse(selectedInspection.get("Id_Inspeccion"), inspectionId));
+		manifestInspection.put("no_inspeccion", selectedInspection.get("No_Inspeccion"));
+		manifestInspection.put("id_sitio", Objects.requireNonNullElse(selectedInspection.get("Id_Sitio"), siteId));
+		manifestInspection.put("id_cliente", selectedInspection.get("Id_Cliente"));
+		manifestInspection.put("id_grupo_sitios", selectedInspection.get("Id_Grupo_Sitios"));
+		manifest.put("inspection", manifestInspection);
 		manifest.put("files", new ArrayList<>(entries.keySet()));
+		manifest.put("media_included", false);
+		manifest.put("checksum_file", "checksums.json");
 
 		byte[] manifestBytes = jsonBytes(manifest);
 		Map<String, String> checksums = new LinkedHashMap<>();
@@ -278,6 +284,9 @@ public class InspectionPackageService {
 		for (String path : filesInManifest) {
 			if (!isAllowedImportPath(path)) {
 				throw new BusinessValidationException("El paquete contiene un archivo no permitido: " + path);
+			}
+			if (isTemplatePath(path)) {
+				continue;
 			}
 			Map<String, Object> payload = parseJsonRequired(zipEntries, path);
 			String tableName = asString(payload.get("table"));
@@ -532,23 +541,63 @@ public class InspectionPackageService {
 	}
 
 	private boolean isAllowedImportPath(String path) {
-		return ALLOWED_IMPORT_PATHS.contains(path) || GLOBAL_TABLES.stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
+		return ALLOWED_IMPORT_PATHS.contains(path)
+			|| "globals/export_table_scope.json".equals(path)
+			|| isTemplatePath(path)
+			|| configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
 	}
 
 	private boolean isDeleteEnabled(String path) {
-		return DELETE_ENABLED_PATHS.contains(path) || GLOBAL_TABLES.stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
+		return DELETE_ENABLED_PATHS.contains(path)
+			|| configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
 	}
 
-	private Map<String, Object> payload(String table, String scope, Map<String, Object> filters, List<Map<String, Object>> rows, List<Map<String, Object>> deletedKeys) {
+	private boolean isTemplatePath(String path) {
+		return path.startsWith("templates/") && !path.contains("..");
+	}
+
+	private List<String> configuredGlobalExportTables() {
+		if (!tableExists("export_table_scope")) {
+			throw new BusinessValidationException("La tabla export_table_scope es obligatoria para exportar catálogos globales");
+		}
+
+		List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+			"SELECT table_name FROM export_table_scope WHERE enabled = 1 AND scope = 'GLOBAL' ORDER BY table_name"
+		);
+		List<String> tableNames = new ArrayList<>();
+		for (Map<String, Object> row : rows) {
+			String tableName = Objects.toString(row.get("table_name"), "").trim();
+			if (!tableName.matches("[A-Za-z0-9_]+")) {
+				throw new BusinessValidationException("Nombre de tabla no válido en export_table_scope: " + tableName);
+			}
+			if (!tableName.isBlank()) {
+				tableNames.add(tableName);
+			}
+		}
+		if (tableNames.isEmpty()) {
+			throw new BusinessValidationException("No hay tablas globales habilitadas en export_table_scope");
+		}
+		return tableNames;
+	}
+
+	private Map<String, Object> payload(String table, String scope, Map<String, Object> filters, List<Map<String, Object>> rows) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("table", table);
 		payload.put("scope", scope);
 		payload.put("filters", filters);
 		payload.put("row_count", rows.size());
 		payload.put("rows", rows);
-		payload.put("deleted_count", deletedKeys.size());
-		payload.put("deleted_keys", deletedKeys);
 		return payload;
+	}
+
+	private Map<String, Object> payload(
+		String table,
+		String scope,
+		Map<String, Object> filters,
+		List<Map<String, Object>> rows,
+		List<Map<String, Object>> deletedKeys
+	) {
+		return payload(table, scope, filters, rows);
 	}
 
 	private Map<String, Object> singleRow(String sql, Object... args) {

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import static com.etic.system.catalogos.shared.domain.model.CatalogDefinitions.booleanField;
 import static com.etic.system.catalogos.shared.domain.model.CatalogDefinitions.field;
 
 @Component
@@ -22,9 +23,11 @@ public class TiposPrioridadCatalogModule implements CatalogModule {
 			"tipos-prioridad", "Tipos de prioridad", "tipo_prioridades", "Id_Tipo_Prioridad", "name", true,
 			List.of(
 				field("name", "Prioridad", true, 5),
-				field("description", "Descripción", true, 1000)
+				field("description", "Descripción", true, 1000),
+				booleanField("isDefault", "Default", false)
 			),
-			"id", "Id_Tipo_Prioridad", "name", "Tipo_Prioridad", "description", "Desc_Prioridad", "status", "Estatus"
+			"id", "Id_Tipo_Prioridad", "name", "Tipo_Prioridad", "description", "Desc_Prioridad",
+			"isDefault", "is_deafult", "status", "Estatus"
 		);
 	}
 }

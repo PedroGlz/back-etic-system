@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
@@ -47,6 +48,7 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 	}
 
 	@Override
+	@Transactional
 	public CatalogRecord create(CatalogDefinition definition, Map<String, Object> values, String userId) {
 		String id = UUID.randomUUID().toString().toUpperCase();
 		List<String> columns = new ArrayList<>();
@@ -65,12 +67,14 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 			parameters.add(":now");
 			params.addValue("userId", userId).addValue("now", Timestamp.valueOf(LocalDateTime.now()));
 		}
+		clearDefaultIfNeeded(definition, values, userId);
 		jdbc.update("INSERT INTO " + definition.table() + " (" + String.join(", ", columns)
 			+ ") VALUES (" + String.join(", ", parameters) + ")", params);
 		return findById(definition, id).orElseThrow();
 	}
 
 	@Override
+	@Transactional
 	public CatalogRecord update(CatalogDefinition definition, String id, Map<String, Object> values, String userId) {
 		List<String> assignments = new ArrayList<>();
 		MapSqlParameterSource params = new MapSqlParameterSource("id", id);
@@ -89,6 +93,7 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 			assignments.add("Fecha_Mod = :now");
 			params.addValue("userId", userId).addValue("now", Timestamp.valueOf(LocalDateTime.now()));
 		}
+		clearDefaultIfNeeded(definition, values, userId);
 		jdbc.update("UPDATE " + definition.table() + " SET " + String.join(", ", assignments)
 			+ " WHERE " + definition.idColumn() + " = :id", params);
 		return findById(definition, id).orElseThrow();
@@ -161,5 +166,27 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 			return value;
 		}
 		return passwordEncoder.encode(value.toString());
+	}
+
+	private void clearDefaultIfNeeded(CatalogDefinition definition, Map<String, Object> values, String userId) {
+		Optional<CatalogField> defaultField = defaultField(definition);
+		if (defaultField.isEmpty() || !"1".equals(String.valueOf(values.get(defaultField.get().name())))) {
+			return;
+		}
+
+		String column = definition.columns().get(defaultField.get().name());
+		String audit = definition.audited() ? ", Modificado_Por = :userId, Fecha_Mod = :now" : "";
+		MapSqlParameterSource params = new MapSqlParameterSource("value", "0")
+			.addValue("currentValue", "1")
+			.addValue("userId", userId)
+			.addValue("now", Timestamp.valueOf(LocalDateTime.now()));
+		jdbc.update("UPDATE " + definition.table() + " SET " + column + " = :value" + audit
+			+ " WHERE " + column + " = :currentValue", params);
+	}
+
+	private Optional<CatalogField> defaultField(CatalogDefinition definition) {
+		return definition.schema().fields().stream()
+			.filter(field -> "boolean".equals(field.type()) && "isDefault".equals(field.name()))
+			.findFirst();
 	}
 }

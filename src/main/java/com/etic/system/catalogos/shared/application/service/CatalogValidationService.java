@@ -43,6 +43,9 @@ public class CatalogValidationService {
 			if (value instanceof String text) {
 				value = text.trim();
 			}
+			if ("boolean".equals(field.type())) {
+				value = normalizeBooleanValue(value);
+			}
 
 			boolean empty = value == null || value.toString().isBlank();
 			if (field.required() && empty && (creating || !field.writeOnly())) {
@@ -67,6 +70,17 @@ public class CatalogValidationService {
 		}
 
 		return validated;
+	}
+
+	private String normalizeBooleanValue(Object value) {
+		if (value == null || value.toString().isBlank()) {
+			return "0";
+		}
+		if (value instanceof Boolean booleanValue) {
+			return booleanValue ? "1" : "0";
+		}
+		String text = value.toString().trim();
+		return "1".equals(text) || "true".equalsIgnoreCase(text) ? "1" : "0";
 	}
 
 	private final class DefaultCatalogRuleContext implements CatalogRuleContext {
