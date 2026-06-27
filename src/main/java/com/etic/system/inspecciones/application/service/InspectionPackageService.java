@@ -1,5 +1,6 @@
 package com.etic.system.inspecciones.application.service;
 
+import com.etic.system.config.StorageProperties;
 import com.etic.system.reportes.plantillas.application.ReportTemplateService;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
@@ -65,18 +66,20 @@ public class InspectionPackageService {
 	private final JdbcClient jdbcClient;
 	private final ObjectMapper objectMapper;
 	private final ReportTemplateService reportTemplateService;
-	private final Path exportsDirectory = Path.of("storage", "inspecciones", "exportaciones");
+	private final Path exportsDirectory;
 
 	public InspectionPackageService(
 		JdbcTemplate jdbcTemplate,
 		JdbcClient jdbcClient,
 		ObjectMapper objectMapper,
-		ReportTemplateService reportTemplateService
+		ReportTemplateService reportTemplateService,
+		StorageProperties storageProperties
 	) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.jdbcClient = jdbcClient;
 		this.objectMapper = objectMapper;
 		this.reportTemplateService = reportTemplateService;
+		this.exportsDirectory = storageProperties.basePath().resolve("inspecciones").resolve("exportaciones").normalize();
 	}
 
 	public ExportedInspectionPackage exportInspection(String inspectionId, String siteId, String fileName) {
@@ -318,7 +321,8 @@ public class InspectionPackageService {
 		ensureExportsDirectory();
 		String siteName = sanitizeFragment(asString(inspection.get("Sitio")));
 		String fileName = "ETIC_LISTADO_DE_PROBLEMAS_" + siteName + "_INSPECCION_" + Objects.toString(inspection.get("No_Inspeccion"), "") + ".csv";
-		Path reportPath = exportsDirectory.resolve(fileName);
+		Path reportPath = exportsDirectory.resolve(fileName).normalize();
+		validateInsideExports(reportPath);
 
 		List<Map<String, Object>> rows;
 		if (tableExists("problemas")) {
@@ -651,7 +655,7 @@ public class InspectionPackageService {
 	}
 
 	private void validateInsideExports(Path file) {
-		if (!file.startsWith(exportsDirectory.normalize())) {
+		if (!file.toAbsolutePath().normalize().startsWith(exportsDirectory)) {
 			throw new BusinessValidationException("La ruta del archivo de exportación no es válida");
 		}
 	}

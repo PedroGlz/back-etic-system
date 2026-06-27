@@ -1,5 +1,6 @@
 package com.etic.system.reportes.plantillas.application;
 
+import com.etic.system.config.StorageProperties;
 import com.etic.system.reportes.plantillas.domain.model.ReportTemplateFile;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
@@ -24,7 +25,11 @@ public class ReportTemplateService {
 	private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "xlsx", "xls");
 	private static final String DOWNLOAD_BASE_URL = "/api/plantillas-reportes/descargar/";
 
-	private final Path templatesDirectory = Path.of("storage", "plantillas-reportes");
+	private final Path templatesDirectory;
+
+	public ReportTemplateService(StorageProperties storageProperties) {
+		this.templatesDirectory = storageProperties.basePath().resolve("plantillas-reportes").normalize();
+	}
 
 	public List<ReportTemplateFile> list() {
 		ensureDirectory();
@@ -127,7 +132,7 @@ public class ReportTemplateService {
 	}
 
 	private void validateInsideTemplates(Path target) {
-		if (!target.startsWith(templatesDirectory.normalize())) {
+		if (!target.toAbsolutePath().normalize().startsWith(templatesDirectory)) {
 			throw new BusinessValidationException("La ruta de la plantilla no es válida");
 		}
 	}
