@@ -181,10 +181,7 @@ public class InspectionService {
 		if (isBlank(command.siteId())) {
 			throw new BusinessValidationException("El sitio es obligatorio");
 		}
-		if (command.startDate() == null) {
-			throw new BusinessValidationException("La fecha de inicio es obligatoria");
-		}
-		if (command.endDate() != null && command.endDate().isBefore(command.startDate())) {
+		if (command.startDate() != null && command.endDate() != null && command.endDate().isBefore(command.startDate())) {
 			throw new BusinessValidationException("La fecha final no puede ser anterior a la fecha inicial");
 		}
 		if (!isBlank(command.temperatureUnit()) && !"C".equalsIgnoreCase(command.temperatureUnit()) && !"F".equalsIgnoreCase(command.temperatureUnit())) {

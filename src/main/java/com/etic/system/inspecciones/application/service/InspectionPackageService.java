@@ -4,6 +4,7 @@ import com.etic.system.config.StorageProperties;
 import com.etic.system.reportes.plantillas.application.ReportTemplateService;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
+import com.etic.system.shared.util.DateValueNormalizer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.FileSystemResource;
@@ -29,7 +30,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -380,7 +380,7 @@ public class InspectionPackageService {
 	}
 
 	private void upsertRow(String tableName, TableMeta meta, Map<String, Object> payload) {
-		Map<String, Object> filtered = filterColumns(payload, meta.columns);
+		Map<String, Object> filtered = filterColumns(payload, meta);
 		if (filtered.isEmpty()) {
 			return;
 		}
@@ -453,11 +453,14 @@ public class InspectionPackageService {
 		return count != null && count > 0;
 	}
 
-	private Map<String, Object> filterColumns(Map<String, Object> payload, Collection<String> columns) {
+	private Map<String, Object> filterColumns(Map<String, Object> payload, TableMeta meta) {
 		Map<String, Object> filtered = new LinkedHashMap<>();
 		for (Map.Entry<String, Object> entry : payload.entrySet()) {
-			if (columns.contains(entry.getKey())) {
-				filtered.put(entry.getKey(), entry.getValue());
+			if (meta.columns.contains(entry.getKey())) {
+				Object value = meta.temporalColumns.contains(entry.getKey())
+					? DateValueNormalizer.normalizeDatabaseDateValue(entry.getValue())
+					: entry.getValue();
+				filtered.put(entry.getKey(), value);
 			}
 		}
 		return filtered;
@@ -485,17 +488,22 @@ public class InspectionPackageService {
 		}
 		List<Map<String, Object>> rows = jdbcTemplate.queryForList("SHOW COLUMNS FROM " + tableName);
 		List<String> columns = new ArrayList<>();
+		List<String> temporalColumns = new ArrayList<>();
 		List<String> primaryKeys = new ArrayList<>();
 		for (Map<String, Object> row : rows) {
 			String field = Objects.toString(row.get("Field"), "");
 			if (!field.isBlank()) {
 				columns.add(field);
 			}
+			String type = Objects.toString(row.get("Type"), "").toLowerCase(Locale.ROOT);
+			if (type.contains("date") || type.contains("time")) {
+				temporalColumns.add(field);
+			}
 			if ("PRI".equals(Objects.toString(row.get("Key"), ""))) {
 				primaryKeys.add(field);
 			}
 		}
-		return new TableMeta(columns, primaryKeys);
+		return new TableMeta(columns, temporalColumns, primaryKeys);
 	}
 
 	private Map<String, byte[]> readZipEntries(MultipartFile file) {
@@ -704,7 +712,7 @@ public class InspectionPackageService {
 		return Objects.toString(value, "");
 	}
 
-	private record TableMeta(List<String> columns, List<String> primaryKeys) {
+	private record TableMeta(List<String> columns, List<String> temporalColumns, List<String> primaryKeys) {
 	}
 
 	public record ExportedInspectionPackage(String fileName, String absolutePath) {

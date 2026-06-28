@@ -266,14 +266,8 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 			       s.Sitio AS siteName,
 			       i.Id_Status_Inspeccion AS statusId,
 			       ei.Status_Inspeccion AS statusName,
-			       CASE
-			           WHEN i.Fecha_Inicio = '0000-00-00 00:00:00' THEN NULL
-			           ELSE i.Fecha_Inicio
-			       END AS startDate,
-			       CASE
-			           WHEN i.Fecha_Fin = '0000-00-00 00:00:00' THEN NULL
-			           ELSE i.Fecha_Fin
-			       END AS endDate,
+			       i.Fecha_Inicio AS startDate,
+			       i.Fecha_Fin AS endDate,
 			       i.No_Dias AS daysCount,
 			       i.Unidad_Temp AS temperatureUnit,
 			       i.Fotos_Ruta AS photosRoute,

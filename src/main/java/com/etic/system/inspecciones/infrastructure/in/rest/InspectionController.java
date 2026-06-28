@@ -6,6 +6,8 @@ import com.etic.system.inspecciones.application.service.InspectionPackageService
 import com.etic.system.inspecciones.application.service.InspectionService;
 import com.etic.system.inspecciones.domain.model.InspectionSession;
 import com.etic.system.inspecciones.domain.model.InspectionSummary;
+import com.etic.system.shared.infrastructure.jackson.NullableLocalDateTimeDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -160,7 +162,9 @@ public class InspectionController {
 		@NotBlank String siteId,
 		String statusId,
 		String temperatureUnit,
+		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime startDate,
+		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime endDate
 	) {
 		UpsertInspectionCommand toCommand() {
@@ -168,7 +172,11 @@ public class InspectionController {
 		}
 	}
 
-	public record UpdateInspectionStatusRequest(@NotBlank String statusId, LocalDateTime endDate) {
+	public record UpdateInspectionStatusRequest(
+		@NotBlank String statusId,
+		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
+		LocalDateTime endDate
+	) {
 		UpdateInspectionStatusCommand toCommand() {
 			return new UpdateInspectionStatusCommand(statusId, endDate);
 		}
