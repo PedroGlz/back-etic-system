@@ -82,12 +82,12 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 			  AND Estatus = :recordStatus
 			  AND (:excludedInspectionId IS NULL OR Id_Inspeccion <> :excludedInspectionId)
 			""";
-		Integer count = jdbc.queryForObject(sql, Map.of(
-			"siteId", siteId,
-			"statusId", InspectionStatusIds.IN_PROGRESS,
-			"recordStatus", ACTIVE,
-			"excludedInspectionId", excludedInspectionId
-		), Integer.class);
+		MapSqlParameterSource params = new MapSqlParameterSource()
+			.addValue("siteId", siteId)
+			.addValue("statusId", InspectionStatusIds.IN_PROGRESS)
+			.addValue("recordStatus", ACTIVE)
+			.addValue("excludedInspectionId", excludedInspectionId);
+		Integer count = jdbc.queryForObject(sql, params, Integer.class);
 		return count != null && count > 0;
 	}
 
