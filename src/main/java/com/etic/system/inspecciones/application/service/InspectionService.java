@@ -65,9 +65,6 @@ public class InspectionService {
 		}
 
 		List<InspectionLocation> locations = persistencePort.findActiveLocationsBySite(command.siteId());
-		if (locations.isEmpty()) {
-			throw new BusinessValidationException("El sitio seleccionado no tiene ubicaciones activas para generar el detalle");
-		}
 
 		Integer maxInspectionNumber = persistencePort.findMaxInspectionNumber();
 		int nextInspectionNumber = maxInspectionNumber == null ? 1 : maxInspectionNumber + 1;
@@ -83,7 +80,9 @@ public class InspectionService {
 			photosRoute,
 			userId
 		);
-		persistencePort.createInspectionDetails(inspectionId, command.siteId(), locations, userId);
+		if (!locations.isEmpty()) {
+			persistencePort.createInspectionDetails(inspectionId, command.siteId(), locations, userId);
+		}
 
 		return findById(inspectionId);
 	}

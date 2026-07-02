@@ -58,9 +58,51 @@ class InspectionServiceTest {
 		assertNull(persistencePort.createdCommand.endDate());
 	}
 
+	@Test
+	void shouldCreateWithoutDetailsWhenSiteHasNoActiveLocations() {
+		StubInspectionPersistencePort persistencePort = new StubInspectionPersistencePort();
+		persistencePort.activeLocations = List.of();
+		InspectionService service = new InspectionService(persistencePort);
+		UpsertInspectionCommand command = new UpsertInspectionCommand(
+			"client-1",
+			"group-1",
+			"site-1",
+			null,
+			"C",
+			null,
+			null
+		);
+
+		service.create(command, "user-1");
+
+		assertEquals(command, persistencePort.createdCommand);
+		assertEquals(0, persistencePort.createdDetailsCount);
+	}
+
+	@Test
+	void shouldCreateDetailsWhenSiteHasActiveLocations() {
+		StubInspectionPersistencePort persistencePort = new StubInspectionPersistencePort();
+		InspectionService service = new InspectionService(persistencePort);
+		UpsertInspectionCommand command = new UpsertInspectionCommand(
+			"client-1",
+			"group-1",
+			"site-1",
+			null,
+			"C",
+			null,
+			null
+		);
+
+		service.create(command, "user-1");
+
+		assertEquals(1, persistencePort.createdDetailsCount);
+	}
+
 	private static final class StubInspectionPersistencePort implements InspectionPersistencePort {
 
 		private UpsertInspectionCommand createdCommand;
+		private List<InspectionLocation> activeLocations = List.of(new InspectionLocation("location-1", "Activo"));
+		private int createdDetailsCount;
 
 		@Override
 		public List<InspectionSummary> findAll() {
@@ -89,7 +131,7 @@ class InspectionServiceTest {
 
 		@Override
 		public List<InspectionLocation> findActiveLocationsBySite(String siteId) {
-			return List.of(new InspectionLocation("location-1", "Activo"));
+			return activeLocations;
 		}
 
 		@Override
@@ -108,6 +150,7 @@ class InspectionServiceTest {
 
 		@Override
 		public void createInspectionDetails(String inspectionId, String siteId, List<InspectionLocation> locations, String userId) {
+			createdDetailsCount += locations.size();
 		}
 
 		@Override
