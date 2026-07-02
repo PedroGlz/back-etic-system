@@ -163,10 +163,10 @@ public class InspectionController {
 		@NotBlank String siteId,
 		String statusId,
 		String temperatureUnit,
-		@JsonAlias("startdate")
+		@JsonAlias({"startdate", "start_date", "fechaInicio", "fecha_inicio", "Fecha_Inicio"})
 		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime startDate,
-		@JsonAlias("enddate")
+		@JsonAlias({"enddate", "end_date", "fechaFin", "fecha_fin", "Fecha_Fin"})
 		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime endDate
 	) {
@@ -177,6 +177,7 @@ public class InspectionController {
 
 	public record UpdateInspectionStatusRequest(
 		@NotBlank String statusId,
+		@JsonAlias({"enddate", "end_date", "fechaFin", "fecha_fin", "Fecha_Fin"})
 		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime endDate
 	) {

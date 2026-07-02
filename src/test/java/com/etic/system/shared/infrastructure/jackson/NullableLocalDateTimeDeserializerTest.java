@@ -42,6 +42,18 @@ class NullableLocalDateTimeDeserializerTest {
 		assertEquals(LocalDateTime.of(2026, 6, 28, 10, 15), request.endDate());
 	}
 
+	@Test
+	void shouldDeserializeInspectionStatusEnddateAlias() throws Exception {
+		InspectionController.UpdateInspectionStatusRequest request = objectMapper.readValue("""
+			{
+				"statusId": "73F27007-76B3-11D3-82BF-00104BC75DC2",
+				"enddate": "2026-06-28T10:15:00"
+			}
+			""", InspectionController.UpdateInspectionStatusRequest.class);
+
+		assertEquals(LocalDateTime.of(2026, 6, 28, 10, 15), request.endDate());
+	}
+
 	private SampleRequest read(String json) throws Exception {
 		return objectMapper.readValue(json, SampleRequest.class);
 	}
