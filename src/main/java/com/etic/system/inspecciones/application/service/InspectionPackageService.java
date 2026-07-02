@@ -7,6 +7,11 @@ import com.etic.system.shared.domain.exception.ResourceNotFoundException;
 import com.etic.system.shared.util.DateValueNormalizer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,7 +21,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -27,7 +31,6 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -320,7 +323,7 @@ public class InspectionPackageService {
 
 		ensureExportsDirectory();
 		String siteName = sanitizeFragment(asString(inspection.get("Sitio")));
-		String fileName = "ETIC_LISTADO_DE_PROBLEMAS_" + siteName + "_INSPECCION_" + Objects.toString(inspection.get("No_Inspeccion"), "") + ".csv";
+		String fileName = "ETIC_LISTADO_DE_PROBLEMAS_" + siteName + "_INSPECCION_" + Objects.toString(inspection.get("No_Inspeccion"), "") + ".xlsx";
 		Path reportPath = exportsDirectory.resolve(fileName).normalize();
 		validateInsideExports(reportPath);
 
@@ -341,28 +344,108 @@ public class InspectionPackageService {
 		List<String> headers = rows.isEmpty() ? List.of("inspeccion", "cliente", "sitio", "fecha_inicio", "fecha_fin")
 			: new ArrayList<>(rows.getFirst().keySet());
 
-		StringBuilder csv = new StringBuilder();
-		csv.append("Reporte,").append(escapeCsv("Listado de problemas")).append('\n');
-		csv.append("Cliente,").append(escapeCsv(asString(inspection.get("Razon_Social")))).append('\n');
-		csv.append("Sitio,").append(escapeCsv(asString(inspection.get("Sitio")))).append('\n');
-		csv.append("Fecha inicio,").append(escapeCsv(startDate)).append('\n');
-		csv.append("Fecha fin,").append(escapeCsv(endDate)).append('\n');
-		csv.append('\n');
-		csv.append(String.join(",", headers)).append('\n');
-		for (Map<String, Object> row : rows) {
-			List<String> values = new ArrayList<>();
-			for (String header : headers) {
-				values.add(escapeCsv(formatValue(row.get(header))));
-			}
-			csv.append(String.join(",", values)).append('\n');
-		}
+		Path templatePath = reportTemplateService.filesForExport().stream()
+			.filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).matches("lista_problemas.*\\.xlsx"))
+			.findFirst()
+			.orElseThrow(() -> new BusinessValidationException("No se encontrÃ³ la plantilla lista_problemas.xlsx en plantillas de reportes"));
 
-		try {
-			Files.writeString(reportPath, csv.toString(), StandardCharsets.UTF_8);
+		try (InputStream templateInputStream = Files.newInputStream(templatePath);
+			 Workbook workbook = WorkbookFactory.create(templateInputStream)) {
+			Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Lista de problemas");
+			Map<String, String> replacements = Map.of(
+				"{{no_inspeccion}}", Objects.toString(inspection.get("No_Inspeccion"), ""),
+				"{{cliente}}", Objects.toString(inspection.get("Razon_Social"), ""),
+				"{{sitio}}", Objects.toString(inspection.get("Sitio"), ""),
+				"{{fecha_inicio}}", Objects.toString(startDate, ""),
+				"{{fecha_fin}}", Objects.toString(endDate, "")
+			);
+			replacePlaceholders(workbook, replacements);
+			int startRow = findProblemsMarkerRow(sheet);
+			writeProblemsTable(sheet, startRow, headers, rows);
+			try (var outputStream = Files.newOutputStream(reportPath)) {
+				workbook.write(outputStream);
+			}
 		} catch (IOException exception) {
 			throw new BusinessValidationException("No fue posible generar el reporte de problemas");
 		}
 		return new FileSystemResource(reportPath);
+	}
+
+	private void replacePlaceholders(Workbook workbook, Map<String, String> replacements) {
+		for (Sheet sheet : workbook) {
+			for (Row row : sheet) {
+				for (Cell cell : row) {
+					if (cell.getCellType() != org.apache.poi.ss.usermodel.CellType.STRING) {
+						continue;
+					}
+					String value = cell.getStringCellValue();
+					for (Map.Entry<String, String> replacement : replacements.entrySet()) {
+						value = value.replace(replacement.getKey(), replacement.getValue());
+					}
+					cell.setCellValue(value);
+				}
+			}
+		}
+	}
+
+	private int findProblemsMarkerRow(Sheet sheet) {
+		for (Row row : sheet) {
+			for (Cell cell : row) {
+				if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
+					String value = cell.getStringCellValue().toLowerCase(Locale.ROOT);
+					if (value.contains("{{problemas}}") || value.contains("{{datos}}")) {
+						clearRow(row);
+						return row.getRowNum();
+					}
+				}
+			}
+		}
+		return Math.max(sheet.getLastRowNum() + 2, 0);
+	}
+
+	private void writeProblemsTable(Sheet sheet, int startRow, List<String> headers, List<Map<String, Object>> rows) {
+		Row headerRow = getOrCreateRow(sheet, startRow);
+		for (int column = 0; column < headers.size(); column++) {
+			headerRow.createCell(column).setCellValue(headers.get(column));
+		}
+
+		for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+			Row row = getOrCreateRow(sheet, startRow + rowIndex + 1);
+			Map<String, Object> values = rows.get(rowIndex);
+			for (int column = 0; column < headers.size(); column++) {
+				writeCell(row.createCell(column), values.get(headers.get(column)));
+			}
+		}
+
+		for (int column = 0; column < headers.size(); column++) {
+			sheet.autoSizeColumn(column);
+		}
+	}
+
+	private Row getOrCreateRow(Sheet sheet, int rowNumber) {
+		Row row = sheet.getRow(rowNumber);
+		return row != null ? row : sheet.createRow(rowNumber);
+	}
+
+	private void clearRow(Row row) {
+		for (int index = row.getFirstCellNum(); index < row.getLastCellNum(); index++) {
+			Cell cell = row.getCell(index);
+			if (cell != null) {
+				cell.setBlank();
+			}
+		}
+	}
+
+	private void writeCell(Cell cell, Object value) {
+		if (value instanceof Number number) {
+			cell.setCellValue(number.doubleValue());
+			return;
+		}
+		if (value instanceof Timestamp timestamp) {
+			cell.setCellValue(timestamp.toLocalDateTime().toString());
+			return;
+		}
+		cell.setCellValue(formatValue(value));
 	}
 
 	private void applyPayload(String tableName, Map<String, Object> payload, boolean deleteEnabled) {
@@ -697,14 +780,9 @@ public class InspectionPackageService {
 		return value == null ? null : value.toString();
 	}
 
-	private String escapeCsv(String value) {
-		String normalized = value == null ? "" : value.replace("\"", "\"\"");
-		return "\"" + normalized + "\"";
-	}
-
 	private String formatValue(Object value) {
 		if (value instanceof Timestamp timestamp) {
-			return timestamp.toLocalDateTime().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+			return timestamp.toLocalDateTime().toString();
 		}
 		if (value instanceof byte[] bytes) {
 			return Base64.getEncoder().encodeToString(bytes);

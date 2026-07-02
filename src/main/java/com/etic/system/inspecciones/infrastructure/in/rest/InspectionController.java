@@ -7,6 +7,7 @@ import com.etic.system.inspecciones.application.service.InspectionService;
 import com.etic.system.inspecciones.domain.model.InspectionSession;
 import com.etic.system.inspecciones.domain.model.InspectionSummary;
 import com.etic.system.shared.infrastructure.jackson.NullableLocalDateTimeDeserializer;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
@@ -147,7 +148,7 @@ public class InspectionController {
 				.filename(resource.getFilename())
 				.build()
 				.toString())
-			.contentType(MediaType.parseMediaType("text/csv"))
+			.contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 			.body(resource);
 	}
 
@@ -162,8 +163,10 @@ public class InspectionController {
 		@NotBlank String siteId,
 		String statusId,
 		String temperatureUnit,
+		@JsonAlias("startdate")
 		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime startDate,
+		@JsonAlias("enddate")
 		@JsonDeserialize(using = NullableLocalDateTimeDeserializer.class)
 		LocalDateTime endDate
 	) {
