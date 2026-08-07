@@ -22,6 +22,6 @@ public class ObservacionesLineaBaseCatalogModule implements CatalogModule {
 			"observaciones-linea-base", "Observaciones de línea base", "cat_observaciones_bl", "id_cat_observaciones_bl", "name", true,
 			List.of(field("name", "Observación", true, 2000)),
 			"id", "id_cat_observaciones_bl", "name", "observacion_bl", "status", "estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

@@ -3,11 +3,10 @@ package com.etic.system.catalogos.usuarios;
 import com.etic.system.catalogos.shared.application.rule.CatalogBusinessRule;
 import com.etic.system.catalogos.shared.application.rule.CatalogRuleContext;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
-import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-@Component
+@Deprecated(forRemoval = true)
 public class UsuariosCatalogBusinessRule implements CatalogBusinessRule {
 
 	@Override

@@ -25,6 +25,6 @@ public class TiposInspeccionCatalogModule implements CatalogModule {
 				field("description", "Descripción", false, 1000)
 			),
 			"id", "Id_Tipo_Inspeccion", "name", "Tipo_Inspeccion", "description", "Desc_Inspeccion", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

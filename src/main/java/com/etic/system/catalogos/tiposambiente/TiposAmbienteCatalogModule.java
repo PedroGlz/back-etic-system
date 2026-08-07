@@ -27,6 +27,6 @@ public class TiposAmbienteCatalogModule implements CatalogModule {
 				numberField("adjustment", "Ajuste", true)
 			),
 			"id", "Id_Tipo_Ambiente", "name", "Nombre", "description", "Descripcion", "adjustment", "Adjust", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

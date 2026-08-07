@@ -28,6 +28,6 @@ public class FabricantesCatalogModule implements CatalogModule {
 			),
 			"id", "Id_Fabricante", "inspectionTypeId", "Id_Tipo_Inspeccion", "name", "Fabricante",
 			"description", "Desc_Fabricante", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

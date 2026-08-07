@@ -28,6 +28,6 @@ public class CausasPrincipalesCatalogModule implements CatalogModule {
 			),
 			"id", "Id_Causa_Raiz", "inspectionTypeId", "Id_Tipo_Inspeccion", "failureId", "Id_Falla",
 			"name", "Causa_Raiz", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

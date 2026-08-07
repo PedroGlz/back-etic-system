@@ -8,6 +8,7 @@ import com.etic.system.shared.domain.exception.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -32,7 +33,38 @@ public class CatalogService {
 	}
 
 	public List<CatalogRecord> findAll(String catalogKey) {
-		return catalogPersistencePort.findAll(catalogRegistry.definition(catalogKey));
+		CatalogDefinition definition = catalogRegistry.definition(catalogKey);
+		List<CatalogRecord> records = catalogPersistencePort.findAll(definition);
+
+		for (var field : definition.schema().fields()) {
+			if (!"reference".equals(field.type()) || field.referenceCatalog() == null) {
+				continue;
+			}
+
+			CatalogDefinition referenceDefinition = catalogRegistry.definition(field.referenceCatalog());
+			Map<Object, String> labels = new LinkedHashMap<>();
+			for (CatalogRecord reference : catalogPersistencePort.findAll(referenceDefinition)) {
+				labels.put(reference.values().get("id"), displayValue(reference));
+			}
+
+			records = records.stream().map(record -> {
+				Map<String, Object> values = new LinkedHashMap<>(record.values());
+				values.put(field.name() + "Label", labels.get(record.values().get(field.name())));
+				return new CatalogRecord(values);
+			}).toList();
+		}
+
+		return records;
+	}
+
+	private String displayValue(CatalogRecord record) {
+		for (String key : List.of("name", "businessName", "commercialName", "username", "email")) {
+			Object value = record.values().get(key);
+			if (value instanceof String text && !text.isBlank()) {
+				return text;
+			}
+		}
+		return String.valueOf(record.values().getOrDefault("id", ""));
 	}
 
 	public CatalogRecord findById(String catalogKey, String id) {

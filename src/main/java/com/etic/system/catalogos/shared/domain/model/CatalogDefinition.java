@@ -33,4 +33,23 @@ public record CatalogDefinition(
 	public Map<String, String> columnsView() {
 		return Map.copyOf(columns);
 	}
+
+	public CatalogDefinition withWorkflowColumns() {
+		LinkedHashMap<String, String> extendedColumns = new LinkedHashMap<>(columns);
+		extendedColumns.put("recordType", "Tipo_Registro");
+		extendedColumns.put("sourceRecordId", "Id_Registro_Origen");
+		extendedColumns.put("inspectionId", "Id_Inspeccion");
+		extendedColumns.put("historical", "Es_Historico");
+		extendedColumns.put("captureOrigin", "Origen_Captura");
+		extendedColumns.put("reviewComment", "Comentario_Revision");
+		extendedColumns.put("reviewedBy", "Revisado_Por");
+		extendedColumns.put("reviewedAt", "Fecha_Revision");
+		return new CatalogDefinition(schema, table, idColumn, extendedColumns, orderField, audited);
+	}
+
+	public CatalogDefinition withColumn(String field, String column) {
+		LinkedHashMap<String, String> extendedColumns = new LinkedHashMap<>(columns);
+		extendedColumns.put(field, column);
+		return new CatalogDefinition(schema, table, idColumn, extendedColumns, orderField, audited);
+	}
 }

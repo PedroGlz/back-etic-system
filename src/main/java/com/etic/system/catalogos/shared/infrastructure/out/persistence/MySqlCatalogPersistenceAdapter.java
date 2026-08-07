@@ -79,7 +79,7 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 		List<String> assignments = new ArrayList<>();
 		MapSqlParameterSource params = new MapSqlParameterSource("id", id);
 		for (Map.Entry<String, String> column : definition.columns().entrySet()) {
-			if (!column.getKey().equals("id") && !column.getKey().equals("status")) {
+			if (isEditable(definition, column.getKey())) {
 				Object value = values.get(column.getKey());
 				if (isWriteOnly(definition, column.getKey()) && (value == null || value.toString().isBlank())) {
 					continue;
@@ -122,13 +122,11 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 
 	private CatalogRecord mapRecord(java.sql.ResultSet rs, CatalogDefinition definition) throws java.sql.SQLException {
 		Map<String, Object> values = new LinkedHashMap<>();
-		for (CatalogField field : definition.schema().fields()) {
-			if (!field.writeOnly()) {
-				values.put(field.name(), rs.getObject(field.name()));
+		for (String fieldName : definition.columns().keySet()) {
+			if (!isWriteOnly(definition, fieldName)) {
+				values.put(fieldName, rs.getObject(fieldName));
 			}
 		}
-		values.put("id", rs.getObject("id"));
-		values.put("status", rs.getObject("status"));
 		return new CatalogRecord(values);
 	}
 
@@ -147,7 +145,7 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 		MapSqlParameterSource params
 	) {
 		for (Map.Entry<String, String> column : definition.columns().entrySet()) {
-			if (!column.getKey().equals("id") && !column.getKey().equals("status")) {
+			if (isEditable(definition, column.getKey())) {
 				columns.add(column.getValue());
 				parameters.add(":" + column.getKey());
 				Object value = values.get(column.getKey());
@@ -159,6 +157,10 @@ public class MySqlCatalogPersistenceAdapter implements CatalogPersistencePort {
 	private boolean isWriteOnly(CatalogDefinition definition, String fieldName) {
 		return definition.schema().fields().stream()
 			.anyMatch(field -> field.name().equals(fieldName) && field.writeOnly());
+	}
+
+	private boolean isEditable(CatalogDefinition definition, String fieldName) {
+		return definition.schema().fields().stream().anyMatch(field -> field.name().equals(fieldName));
 	}
 
 	private Object passwordValue(String fieldName, Object value) {

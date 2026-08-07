@@ -28,6 +28,6 @@ public class RecomendacionesCatalogModule implements CatalogModule {
 			),
 			"id", "Id_Recomendacion", "inspectionTypeId", "Id_Tipo_Inspeccion", "rootCauseId", "Id_Causa_Raiz",
 			"name", "Recomendacion", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }

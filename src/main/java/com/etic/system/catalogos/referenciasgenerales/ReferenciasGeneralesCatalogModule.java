@@ -22,6 +22,6 @@ public class ReferenciasGeneralesCatalogModule implements CatalogModule {
 			"referencias-generales", "Referencias generales", "referencias_generales", "Id_Referencia_General", "name", true,
 			List.of(field("name", "Referencia general", true, 2000)),
 			"id", "Id_Referencia_General", "name", "Referencia_General", "status", "Estatus"
-		);
+		).withColumn("exportScope", "Export_Scope");
 	}
 }

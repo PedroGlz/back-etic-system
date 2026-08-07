@@ -22,6 +22,6 @@ public class RecomendacionesGeneralesCatalogModule implements CatalogModule {
 			"recomendaciones-generales", "Recomendaciones generales", "recomendaciones_generales", "Id_Recomendacion_General", "name", true,
 			List.of(field("name", "Recomendación general", true, 2000)),
 			"id", "Id_Recomendacion_General", "name", "Recomendacion_General", "status", "Estatus"
-		);
+		).withColumn("exportScope", "Export_Scope");
 	}
 }

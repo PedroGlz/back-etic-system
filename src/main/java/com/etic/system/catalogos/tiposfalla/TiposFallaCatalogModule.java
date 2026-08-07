@@ -28,6 +28,6 @@ public class TiposFallaCatalogModule implements CatalogModule {
 			),
 			"id", "Id_Tipo_Falla", "inspectionTypeId", "Id_Tipo_Inspeccion", "name", "Tipo_Falla",
 			"description", "Desc_Tipo_Falla", "status", "Estatus"
-		);
+		).withWorkflowColumns();
 	}
 }
