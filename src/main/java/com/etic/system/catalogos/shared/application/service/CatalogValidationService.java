@@ -44,12 +44,15 @@ public class CatalogValidationService {
 				value = text.trim();
 			}
 			if ("boolean".equals(field.type())) {
-				value = normalizeBooleanValue(value);
+				value = normalizeBooleanValue(field.name(), value);
 			}
 
 			boolean empty = value == null || value.toString().isBlank();
 			if (field.required() && empty && (creating || !field.writeOnly())) {
 				throw new BusinessValidationException(field.label() + " es obligatorio");
+			}
+			if (empty && !field.required()) {
+				value = null;
 			}
 			if (value != null && field.maxLength() != null && value.toString().length() > field.maxLength()) {
 				throw new BusinessValidationException(field.label() + " no puede exceder " + field.maxLength() + " caracteres");
@@ -72,15 +75,18 @@ public class CatalogValidationService {
 		return validated;
 	}
 
-	private String normalizeBooleanValue(Object value) {
+	private String normalizeBooleanValue(String fieldName, Object value) {
+		boolean enabled;
 		if (value == null || value.toString().isBlank()) {
-			return "0";
+			enabled = false;
+		} else if (value instanceof Boolean booleanValue) {
+			enabled = booleanValue;
+		} else {
+			String text = value.toString().trim();
+			enabled = "1".equals(text) || "true".equalsIgnoreCase(text)
+				|| "si".equalsIgnoreCase(text) || "sí".equalsIgnoreCase(text);
 		}
-		if (value instanceof Boolean booleanValue) {
-			return booleanValue ? "1" : "0";
-		}
-		String text = value.toString().trim();
-		return "1".equals(text) || "true".equalsIgnoreCase(text) ? "1" : "0";
+		return "isEquipment".equals(fieldName) ? (enabled ? "SI" : "NO") : (enabled ? "1" : "0");
 	}
 
 	private final class DefaultCatalogRuleContext implements CatalogRuleContext {

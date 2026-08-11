@@ -23,10 +23,9 @@ public class RecomendacionesCatalogModule implements CatalogModule {
 			"recomendaciones", "Recomendaciones", "recomendaciones", "Id_Recomendacion", "name", true,
 			List.of(
 				referenceField("inspectionTypeId", "Tipo de inspección", true, "tipos-inspeccion"),
-				referenceField("rootCauseId", "Causa principal", true, "causas-principales"),
 				field("name", "Recomendación", true, 2000)
 			),
-			"id", "Id_Recomendacion", "inspectionTypeId", "Id_Tipo_Inspeccion", "rootCauseId", "Id_Causa_Raiz",
+			"id", "Id_Recomendacion", "inspectionTypeId", "Id_Tipo_Inspeccion",
 			"name", "Recomendacion", "status", "Estatus"
 		).withWorkflowColumns();
 	}

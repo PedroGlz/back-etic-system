@@ -23,10 +23,9 @@ public class CausasPrincipalesCatalogModule implements CatalogModule {
 			"causas-principales", "Causas principales", "causa_principal", "Id_Causa_Raiz", "name", true,
 			List.of(
 				referenceField("inspectionTypeId", "Tipo de inspección", true, "tipos-inspeccion"),
-				referenceField("failureId", "Falla", false, "fallas"),
 				field("name", "Causa principal", true, 2000)
 			),
-			"id", "Id_Causa_Raiz", "inspectionTypeId", "Id_Tipo_Inspeccion", "failureId", "Id_Falla",
+			"id", "Id_Causa_Raiz", "inspectionTypeId", "Id_Tipo_Inspeccion",
 			"name", "Causa_Raiz", "status", "Estatus"
 		).withWorkflowColumns();
 	}

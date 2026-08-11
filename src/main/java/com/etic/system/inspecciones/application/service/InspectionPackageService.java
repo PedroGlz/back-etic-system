@@ -17,6 +17,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -64,6 +65,21 @@ public class InspectionPackageService {
 	);
 	private static final String UPSERT = "UPSERT";
 	private static final String UPSERT_DELETE = "UPSERT_DELETE";
+	private static final Map<String, ReportReference> PROBLEM_REPORT_REFERENCES = Map.ofEntries(
+		Map.entry("Id_Tipo_Inspeccion", new ReportReference("Tipo de inspección", "tipo_inspecciones", "Id_Tipo_Inspeccion", "Tipo_Inspeccion")),
+		Map.entry("Id_Sitio", new ReportReference("Sitio", "sitios", "Id_Sitio", "Sitio")),
+		Map.entry("Id_Inspeccion", new ReportReference("Inspección", "inspecciones", "Id_Inspeccion", "No_Inspeccion")),
+		Map.entry("Id_Ubicacion", new ReportReference("Ubicación", "ubicaciones", "Id_Ubicacion", "Ubicacion")),
+		Map.entry("Id_Fabricante", new ReportReference("Fabricante", "fabricantes", "Id_Fabricante", "Fabricante")),
+		Map.entry("Id_Falla", new ReportReference("Falla", "fallas", "Id_Falla", "Falla")),
+		Map.entry("Id_Equipo", new ReportReference("Equipo", "equipos", "Id_Equipo", "Equipo")),
+		Map.entry("Id_Recomendacion", new ReportReference("Recomendación", "recomendaciones", "Id_Recomendacion", "Recomendacion")),
+		Map.entry("Id_Causa_Raiz", new ReportReference("Causa principal", "causa_principal", "Id_Causa_Raiz", "Causa_Raiz")),
+		Map.entry("Id_Severidad", new ReportReference("Severidad", "severidades", "Id_Severidad", "Severidad")),
+		Map.entry("Creado_Por", new ReportReference("Creado por", "usuarios", "Id_Usuario", "Nombre")),
+		Map.entry("Modificado_Por", new ReportReference("Modificado por", "usuarios", "Id_Usuario", "Nombre"))
+	);
+	private static final Set<String> PROBLEM_REPORT_INTERNAL_IDS = Set.of("Id_Problema", "Id_Inspeccion_Det");
 
 	private final JdbcTemplate jdbcTemplate;
 	private final JdbcClient jdbcClient;
@@ -255,7 +271,8 @@ public class InspectionPackageService {
 		return new FileSystemResource(file);
 	}
 
-	public ImportInspectionResult importInspectionResult(MultipartFile file) {
+	@Transactional
+	public ImportInspectionResult importInspectionResult(String expectedInspectionId, MultipartFile file) {
 		if (file == null || file.isEmpty()) {
 			throw new BusinessValidationException("Selecciona un paquete ZIP válido para importar");
 		}
@@ -272,6 +289,7 @@ public class InspectionPackageService {
 		if (!"inspection_result".equals(packageType)) {
 			throw new BusinessValidationException("El paquete seleccionado no corresponde a un resultado de inspección");
 		}
+		validateInspectionIdentity(manifest, expectedInspectionId);
 
 		String deltaMode = asString(manifest.getOrDefault("delta_mode", UPSERT)).toUpperCase(Locale.ROOT);
 		if (!UPSERT.equals(deltaMode) && !UPSERT_DELETE.equals(deltaMode)) {
@@ -341,6 +359,7 @@ public class InspectionPackageService {
 			);
 		}
 
+		rows = resolveProblemReportReferences(rows);
 		List<String> headers = rows.isEmpty() ? List.of("inspeccion", "cliente", "sitio", "fecha_inicio", "fecha_fin")
 			: new ArrayList<>(rows.getFirst().keySet());
 
@@ -420,6 +439,39 @@ public class InspectionPackageService {
 		for (int column = 0; column < headers.size(); column++) {
 			sheet.autoSizeColumn(column);
 		}
+	}
+
+	private List<Map<String, Object>> resolveProblemReportReferences(List<Map<String, Object>> rows) {
+		Map<ReportReference, Map<Object, Object>> catalogs = new HashMap<>();
+		for (ReportReference reference : new LinkedHashSet<>(PROBLEM_REPORT_REFERENCES.values())) {
+			if (!tableExists(reference.table())) {
+				continue;
+			}
+			Map<Object, Object> values = new HashMap<>();
+			for (Map<String, Object> record : jdbcTemplate.queryForList(
+				"SELECT " + reference.idColumn() + " AS id, " + reference.labelColumn() + " AS label FROM " + reference.table()
+			)) {
+				values.put(record.get("id"), record.get("label"));
+			}
+			catalogs.put(reference, values);
+		}
+
+		return rows.stream().map(row -> {
+			Map<String, Object> resolved = new LinkedHashMap<>();
+			for (Map.Entry<String, Object> entry : row.entrySet()) {
+				if (PROBLEM_REPORT_INTERNAL_IDS.contains(entry.getKey())) {
+					continue;
+				}
+				ReportReference reference = PROBLEM_REPORT_REFERENCES.get(entry.getKey());
+				if (reference == null) {
+					resolved.put(entry.getKey(), entry.getValue());
+					continue;
+				}
+				Object label = catalogs.getOrDefault(reference, Map.of()).get(entry.getValue());
+				resolved.put(reference.header(), label == null ? "" : label);
+			}
+			return resolved;
+		}).toList();
 	}
 
 	private Row getOrCreateRow(Sheet sheet, int rowNumber) {
@@ -538,15 +590,59 @@ public class InspectionPackageService {
 
 	private Map<String, Object> filterColumns(Map<String, Object> payload, TableMeta meta) {
 		Map<String, Object> filtered = new LinkedHashMap<>();
+		Map<String, String> canonicalColumns = new HashMap<>();
+		meta.columns.forEach(column -> canonicalColumns.put(column.toLowerCase(Locale.ROOT), column));
 		for (Map.Entry<String, Object> entry : payload.entrySet()) {
-			if (meta.columns.contains(entry.getKey())) {
-				Object value = meta.temporalColumns.contains(entry.getKey())
+			String column = canonicalColumns.get(entry.getKey().toLowerCase(Locale.ROOT));
+			if (column != null) {
+				Object value = meta.temporalColumns.contains(column)
 					? DateValueNormalizer.normalizeDatabaseDateValue(entry.getValue())
 					: entry.getValue();
-				filtered.put(entry.getKey(), value);
+				filtered.put(column, value);
 			}
 		}
 		return filtered;
+	}
+
+	private void validateInspectionIdentity(Map<String, Object> manifest, String expectedInspectionId) {
+		if (expectedInspectionId == null || expectedInspectionId.isBlank()) {
+			throw new BusinessValidationException("No se indicó la inspección que se desea actualizar");
+		}
+
+		Map<String, Object> inspection = objectMapper.convertValue(
+			manifest.getOrDefault("inspection", Map.of()),
+			new TypeReference<>() {}
+		);
+		String packageInspectionId = firstNonBlank(
+			asString(inspection.get("id_inspeccion")),
+			asString(inspection.get("inspection_id")),
+			asString(inspection.get("inspectionId")),
+			asString(inspection.get("Id_Inspeccion"))
+		);
+		if (packageInspectionId == null) {
+			throw new BusinessValidationException("El manifest no identifica la inspección contenida en el paquete");
+		}
+		if (!expectedInspectionId.equalsIgnoreCase(packageInspectionId)) {
+			throw new BusinessValidationException("El paquete pertenece a otra inspección y no puede utilizarse para esta actualización");
+		}
+
+		Integer count = jdbcTemplate.queryForObject(
+			"SELECT COUNT(*) FROM inspecciones WHERE Id_Inspeccion = ?",
+			Integer.class,
+			expectedInspectionId
+		);
+		if (count == null || count == 0) {
+			throw new ResourceNotFoundException("No se encontró la inspección seleccionada para actualizar");
+		}
+	}
+
+	private String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (value != null && !value.isBlank()) {
+				return value;
+			}
+		}
+		return null;
 	}
 
 	private Map<String, Object> primaryKeyValues(TableMeta meta, Map<String, Object> row) {
@@ -791,6 +887,9 @@ public class InspectionPackageService {
 	}
 
 	private record TableMeta(List<String> columns, List<String> temporalColumns, List<String> primaryKeys) {
+	}
+
+	private record ReportReference(String header, String table, String idColumn, String labelColumn) {
 	}
 
 	public record ExportedInspectionPackage(String fileName, String absolutePath) {

@@ -130,9 +130,12 @@ public class InspectionController {
 			.body(resource);
 	}
 
-	@PostMapping(value = "/importar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-	public InspectionImportResponse importResult(@RequestParam("bd_inspeccion") MultipartFile file) {
-		InspectionPackageService.ImportInspectionResult result = inspectionPackageService.importInspectionResult(file);
+	@PostMapping(value = "/{inspectionId}/importar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public InspectionImportResponse importResult(
+		@PathVariable String inspectionId,
+		@RequestParam("bd_inspeccion") MultipartFile file
+	) {
+		InspectionPackageService.ImportInspectionResult result = inspectionPackageService.importInspectionResult(inspectionId, file);
 		return new InspectionImportResponse(200, result.processedFiles(), result.paths());
 	}
 

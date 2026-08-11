@@ -23,10 +23,9 @@ public class FallasCatalogModule implements CatalogModule {
 			"fallas", "Fallas", "fallas", "Id_Falla", "name", true,
 			List.of(
 				referenceField("inspectionTypeId", "Tipo de inspección", true, "tipos-inspeccion"),
-				referenceField("failureTypeId", "Tipo de falla", true, "tipos-falla"),
 				field("name", "Falla", true, 1000)
 			),
-			"id", "Id_Falla", "inspectionTypeId", "Id_Tipo_Inspeccion", "failureTypeId", "Id_Tipo_Falla",
+			"id", "Id_Falla", "inspectionTypeId", "Id_Tipo_Inspeccion",
 			"name", "Falla", "status", "Estatus"
 		).withWorkflowColumns();
 	}

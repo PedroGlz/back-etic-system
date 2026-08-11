@@ -115,7 +115,7 @@ public class InspectionService {
 	public void deactivate(String inspectionId, String userId, HttpSession session) {
 		InspectionSummary current = findById(inspectionId);
 		if (!current.deletable()) {
-			throw new BusinessValidationException("Solo la inspección más reciente y no cerrada puede desactivarse");
+			throw new BusinessValidationException("Solo la inspección más reciente y no cerrada puede eliminarse");
 		}
 		persistencePort.deactivateInspection(inspectionId, userId);
 

@@ -21,7 +21,6 @@ import java.util.UUID;
 public class MySqlInspectionPersistenceAdapter implements InspectionPersistencePort {
 
 	private static final String ACTIVE = "Activo";
-	private static final String INACTIVE = "Inactivo";
 
 	private final NamedParameterJdbcTemplate jdbc;
 
@@ -232,25 +231,9 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 
 	@Override
 	public void deactivateInspection(String inspectionId, String userId) {
-		MapSqlParameterSource params = new MapSqlParameterSource()
-			.addValue("inspectionId", inspectionId)
-			.addValue("status", INACTIVE)
-			.addValue("userId", userId)
-			.addValue("now", Timestamp.valueOf(LocalDateTime.now()));
-		jdbc.update("""
-			UPDATE inspecciones_det
-			SET Estatus = :status,
-			    Modificado_Por = :userId,
-			    Fecha_Mod = :now
-			WHERE Id_Inspeccion = :inspectionId
-			""", params);
-		jdbc.update("""
-			UPDATE inspecciones
-			SET Estatus = :status,
-			    Modificado_Por = :userId,
-			    Fecha_Mod = :now
-			WHERE Id_Inspeccion = :inspectionId
-			""", params);
+		Map<String, String> params = Map.of("inspectionId", inspectionId);
+		jdbc.update("DELETE FROM inspecciones_det WHERE Id_Inspeccion = :inspectionId", params);
+		jdbc.update("DELETE FROM inspecciones WHERE Id_Inspeccion = :inspectionId", params);
 	}
 
 	private String baseSelect() {
