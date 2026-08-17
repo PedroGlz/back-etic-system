@@ -17,6 +17,14 @@ public class UbicacionesCatalogBusinessRule implements CatalogBusinessRule {
 
 	@Override
 	public void validate(Map<String, Object> values, boolean creating, CatalogRuleContext context) {
+		Object mta = values.get("mta");
+		if (mta != null) {
+			try {
+				values.put("mta", Integer.valueOf(mta.toString()));
+			} catch (NumberFormatException exception) {
+				throw new BusinessValidationException("MTA debe ser un número entero");
+			}
+		}
 		boolean equipment = "SI".equalsIgnoreCase(String.valueOf(values.get("isEquipment")));
 		Object categoryId = values.get("equipmentCategoryId");
 		if (equipment && (categoryId == null || categoryId.toString().isBlank())) {

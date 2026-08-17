@@ -775,10 +775,21 @@ public class InspectionPackageService {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("table", table);
 		payload.put("scope", scope);
-		payload.put("filters", filters);
+		payload.put("filters", normalizeExportRow(filters));
 		payload.put("row_count", rows.size());
-		payload.put("rows", rows);
+		payload.put("rows", rows.stream().map(this::normalizeExportRow).toList());
 		return payload;
+	}
+
+	private Map<String,Object> normalizeExportRow(Map<String,Object> source){
+		Map<String,Object> normalized=new LinkedHashMap<>();
+		source.forEach((column,value)->normalized.put(column,isIdentifierColumn(column)&&value instanceof String text?text.toUpperCase(Locale.ROOT):value));
+		return normalized;
+	}
+
+	private boolean isIdentifierColumn(String column){
+		String name=column.toLowerCase(Locale.ROOT);
+		return name.equals("id")||name.startsWith("id_")||name.endsWith("id")||name.equals("creado_por")||name.equals("modificado_por")||name.equals("revisado_por");
 	}
 
 	private Map<String, Object> payload(

@@ -1,0 +1,87 @@
+{
+  "formatVersion": 1,
+  "metadata": { "exporterVersion": "test-1", "source": "SQL Server fixture" },
+  "customers": [
+    { "CustomerID": "C1", "Name": "Cliente histórico", "DeleteFlag": 0 }
+  ],
+  "customerSites": [
+    { "CustomerSiteID": "S1", "CustomerID": "C1", "SiteName": "Planta Norte", "Address": "Calle 1", "City": "Monterrey", "State": "Nuevo León", "DefaultSiteFolder": "PLANTA_NORTE", "DeleteFlag": 0 }
+  ],
+  "equipment": [
+    { "EquipmentID": "E1", "EquipmentGroupID": "EG1", "InspectionTypeID": "IT1", "Name": "Tablero", "DeleteFlag": 0 }
+  ],
+  "equipmentGroups": [
+    { "EquipmentGroupID": "EG1", "InspectionTypeID": "IT1", "Name": "Distribución", "DeleteFlag": 0 }
+  ],
+  "equipmentFaultLinks": [],
+  "manufacturers": [
+    { "ManufacturerID": "M1", "InspectionTypeID": "IT1", "Name": "Fabricante Uno", "DeleteFlag": 0 }
+  ],
+  "inspectionTypes": [
+    { "InspectionTypeID": "IT1", "Name": "I/C Electrical", "Description": "Eléctrica" }
+  ],
+  "inspectionStatuses": [
+    { "InspectionStatusID": "IS1", "Name": "Terminada", "DeleteFlag": 0 }
+  ],
+  "inspectionDetailStatuses": [
+    { "InspectionDetailStatusID": "IDS1", "Name": "Inspeccionada", "DeleteFlag": 0 }
+  ],
+  "inspections": [
+    { "InspectionID": "I1", "CustomerSiteID": "S1", "CustomerID": "C1", "InspectionStatusID": "IS1", "ScheduledStart": "2024-01-10T08:00:00", "ScheduledEnd": "2024-01-10T17:00:00", "NoOfDays": 1, "TemperatureUnit": "F", "InspectionNo": 1, "PhotoPath": "/1", "DeleteFlag": 0 },
+    { "InspectionID": "I2", "CustomerSiteID": "S1", "CustomerID": "C1", "InspectionStatusID": "IS1", "ScheduledStart": "2025-01-10T08:00:00", "ScheduledEnd": "2025-01-10T17:00:00", "NoOfDays": 1, "TemperatureUnit": "C", "InspectionNo": 2, "LastInspectionNo": 1, "PhotoPath": "/2", "DeleteFlag": 0 }
+  ],
+  "inspectionDetails": [
+    { "InspectionDetailID": "ID1", "InspectionID": "I1", "LocationID": "L2", "InspectionDetailStatusID": "IDS1", "CreateDate": "2024-01-10T09:00:00" },
+    { "InspectionDetailID": "ID2", "InspectionID": "I2", "LocationID": "L2", "InspectionDetailStatusID": "IDS1", "CreateDate": "2025-01-10T09:00:00" }
+  ],
+  "locations": [
+    { "LocationID": "L1", "CustomerSiteID": "S1", "ParentID": null, "Name": "Planta", "InspectionOrder": 1, "IsEquipment": 0, "DeleteFlag": 0 },
+    { "LocationID": "L2", "CustomerSiteID": "S1", "ParentID": "L1", "Name": "Tablero principal", "PriorityStatusID": "PS1", "InspectionTypeID": "IT1", "EquipmentID": "E1", "ManufacturerID": "M1", "InspectionOrder": 1, "IsEquipment": 1, "LocationPath": "Planta/Tablero principal", "DeleteFlag": 0 }
+  ],
+  "locationBaselines": [
+    { "BaselineID": "B1", "LocationID": "L2", "InspectionID": "I1", "MeasuredBaseline": 86, "AmbientBaseline": 77, "CurrentThreshold": 104, "CustomerNotes": "Base F", "DeleteFlag": 0 },
+    { "BaselineID": "B2", "LocationID": "L2", "InspectionID": "I2", "MeasuredBaseline": 31, "AmbientBaseline": 25, "CurrentThreshold": 40, "CustomerNotes": "Base C", "DeleteFlag": 0 }
+  ],
+  "locationBaselinePhotos": [
+    { "BaselinePhotoID": "BP1", "BaselineID": "B1", "FileName": "baseline-ir.jpg", "CreateDate": "2024-01-10T10:00:00" }
+  ],
+  "problems": [
+    { "ProblemID": "P0", "LocationID": "L2", "EquipmentID": "E1", "FaultID": "F1", "InspectionTypeID": "IT1", "ManufacturerID": "M1", "ComponentComment": "Problema normal", "ProblemStatus": 1, "IsChronic": 0, "DeleteFlag": 0 },
+    { "ProblemID": "P1", "LocationID": "L2", "EquipmentID": "E1", "FaultID": "F1", "InspectionTypeID": "IT1", "ManufacturerID": "M1", "ComponentComment": "Crónico original", "ProblemStatus": 1, "IsChronic": 1, "DeleteFlag": 0 },
+    { "ProblemID": "P2", "PriorProblemID": "P1", "LocationID": "L2", "EquipmentID": "E1", "FaultID": "F1", "InspectionTypeID": "IT1", "ManufacturerID": "M1", "ComponentComment": "Crónico recurrente", "ProblemStatus": 1, "IsChronic": 1, "DeleteFlag": 0 }
+  ],
+  "problemInspections": [
+    { "ProblemInspectionID": "PI0", "ProblemID": "P0", "InspectionID": "I1", "InspectionDetailID": "ID1", "ProblemNo": 1, "CreateDate": "2024-01-10T11:00:00", "DeleteFlag": 0 },
+    { "ProblemInspectionID": "PI1", "ProblemID": "P1", "InspectionID": "I1", "InspectionDetailID": "ID1", "ProblemNo": 2, "CreateDate": "2024-01-10T12:00:00", "DeleteFlag": 0 },
+    { "ProblemInspectionID": "PI2", "ProblemID": "P2", "InspectionID": "I2", "InspectionDetailID": "ID2", "ProblemNo": 1, "CreateDate": "2025-01-10T12:00:00", "DeleteFlag": 0 }
+  ],
+  "pieProblemInspections": [
+    { "PIEProblemInspectionID": "PIE0", "ProblemInspectionID": "PI0", "ProblemTemperature": 140, "ReferenceTemperature": 86, "AmbientTemperature": 77, "ProblemSeverityID": "SV1", "PIEEnvironmentID": "ENV1", "CreateDate": "2024-01-10T11:05:00" },
+    { "PIEProblemInspectionID": "PIE1", "ProblemInspectionID": "PI1", "ProblemTemperature": 122, "ReferenceTemperature": 86, "AmbientTemperature": 77, "ProblemSeverityID": "SV1", "PIEEnvironmentID": "ENV1", "CreateDate": "2024-01-10T12:05:00" },
+    { "PIEProblemInspectionID": "PIE2", "ProblemInspectionID": "PI2", "ProblemTemperature": 52, "ReferenceTemperature": 30, "AmbientTemperature": 25, "ProblemSeverityID": "SV1", "PIEEnvironmentID": "ENV1", "CreateDate": "2025-01-10T12:05:00" }
+  ],
+  "problemPhotos": [
+    { "ProblemPhotoID": "PP1", "ProblemInspectionID": "PI1", "PhotoFileName": "problema.jpg", "IRFilename": "problema-ir.jpg", "PhotoDate": "2024-01-10T12:10:00", "IRDate": "2024-01-10T12:10:00", "CreateDate": "2024-01-10T12:10:00" }
+  ],
+  "problemSeverity": [
+    { "ProblemSeverityID": "SV1", "Name": "1-Critical", "BaseCentigrade": 16, "BaseCRange": ">16 °C" }
+  ],
+  "priorityStatus": [
+    { "PriorityStatusID": "PS1", "Name": "CTO", "Description": "Crítica para la operación", "DeleteFlag": 0 }
+  ],
+  "faults": [
+    { "FaultID": "F1", "FaultTypeID": "FT1", "Fault": "Conexión deficiente", "DeleteFlag": 0 }
+  ],
+  "faultTypes": [
+    { "FaultTypeID": "FT1", "InspectionTypeID": "IT1", "Name": "Eléctrica", "DeleteFlag": 0 }
+  ],
+  "rootCauses": [
+    { "RootCauseID": "RC1", "InspectionTypeID": "IT1", "FaultID": "F1", "RootCause": "Conexión floja" }
+  ],
+  "piePhases": [
+    { "PIEPhaseID": "PH1", "Name": "Fase A", "DeleteFlag": 0 }
+  ],
+  "pieEnvironments": [
+    { "PIEEnvironmentID": "ENV1", "Name": "Interior", "Adjust": 0 }
+  ]
+}

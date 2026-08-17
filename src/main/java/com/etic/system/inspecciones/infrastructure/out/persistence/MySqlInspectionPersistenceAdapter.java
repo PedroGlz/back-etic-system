@@ -97,9 +97,13 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 
 	@Override
 	public List<InspectionLocation> findActiveLocationsBySite(String siteId) {
-		String sql = "SELECT Id_Ubicacion AS id, Estatus AS status FROM ubicaciones WHERE Id_Sitio = :siteId AND Estatus = :status";
+		String sql = "SELECT Id_Ubicacion AS id, Estatus AS status, MTA AS mta FROM ubicaciones WHERE Id_Sitio = :siteId AND Estatus = :status";
 		return jdbc.query(sql, Map.of("siteId", siteId, "status", ACTIVE), (rs, rowNum) ->
-			new InspectionLocation(rs.getString("id"), rs.getString("status"))
+			new InspectionLocation(
+				rs.getString("id"),
+				rs.getString("status"),
+				rs.getObject("mta") instanceof Number number ? number.intValue() : null
+			)
 		);
 	}
 
@@ -150,10 +154,10 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 		String sql = """
 			INSERT INTO inspecciones_det (
 				Id_Inspeccion_Det, Id_Inspeccion, Id_Ubicacion, Id_Sitio, Id_Status_Inspeccion_Det,
-				Notas_Inspeccion, Id_Estatus_Color_Text, Estatus, Creado_Por, Fecha_Creacion
+				Notas_Inspeccion, MTA, Id_Estatus_Color_Text, Estatus, Creado_Por, Fecha_Creacion
 			) VALUES (
 				:detailId, :inspectionId, :locationId, :siteId, :detailStatusId,
-				:notes, :colorTextId, :status, :userId, :now
+				:notes, :mta, :colorTextId, :status, :userId, :now
 			)
 			""";
 		MapSqlParameterSource[] batch = locations.stream()
@@ -164,6 +168,7 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 				.addValue("siteId", siteId)
 				.addValue("detailStatusId", InspectionStatusIds.DETAIL_INITIAL)
 				.addValue("notes", "")
+				.addValue("mta", location.mta())
 				.addValue("colorTextId", "1")
 				.addValue("status", location.status())
 				.addValue("userId", userId)
