@@ -29,6 +29,11 @@ class DateValueNormalizerTest {
 	}
 
 	@Test
+	void shouldConvertLegacyDayFirstDateToDatabaseFormat() {
+		assertEquals("2026-08-21", DateValueNormalizer.normalizeDatabaseDateValue("21/08/2026"));
+	}
+
+	@Test
 	void shouldParseNullableLocalDateTime() {
 		assertNull(DateValueNormalizer.parseNullableLocalDateTime(null));
 		assertNull(DateValueNormalizer.parseNullableLocalDateTime(""));

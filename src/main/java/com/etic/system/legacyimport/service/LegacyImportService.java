@@ -24,6 +24,8 @@ import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Service
 public class LegacyImportService {
@@ -37,6 +39,7 @@ public class LegacyImportService {
 	private final LegacyImportProperties properties;
 	private final Path importsDirectory;
 	private final LegacyImportCleanupService cleanupService;
+	private final ConcurrentMap<String, LegacyImportAnalysis> analysisCache = new ConcurrentHashMap<>();
 
 	public LegacyImportService(
 		LegacyImportJobRepository repository,
@@ -71,6 +74,7 @@ public class LegacyImportService {
 			}
 			repository.updateState(id, LegacyImportStatus.VALIDATING, "STRUCTURE", 25, null, null);
 			LegacyImportAnalysis analysis = analyze(target);
+			analysisCache.put(id, analysis);
 			repository.updateState(id, LegacyImportStatus.READY, "ANALYSIS", 100, null, null);
 			return repository.findById(id).orElseThrow();
 		} catch (IOException | LegacyJsonFormatException exception) {
@@ -95,7 +99,7 @@ public class LegacyImportService {
 		if (!Files.isRegularFile(path)) {
 			throw new ResourceNotFoundException("Archivo de importación legacy no encontrado");
 		}
-		return analyze(path);
+		return analysisCache.computeIfAbsent(id, ignored -> analyze(path));
 	}
 
 	LegacyImportAnalysis analysisForExecution(String id) {
@@ -103,7 +107,7 @@ public class LegacyImportService {
 		if (!Files.isRegularFile(path)) {
 			throw new ResourceNotFoundException("Archivo de importación legacy no encontrado");
 		}
-		return analyze(path);
+		return analysisCache.computeIfAbsent(id, ignored -> analyze(path));
 	}
 
 	public LegacyImportJob status(String id, String createdBy) {
@@ -166,6 +170,7 @@ public class LegacyImportService {
 	}
 
 	private void fail(String id, String message) {
+		analysisCache.remove(id);
 		repository.updateState(id, LegacyImportStatus.FAILED, "VALIDATION", 100,
 			message == null ? "Error de validación" : message, LocalDateTime.now());
 	}

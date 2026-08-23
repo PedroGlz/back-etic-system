@@ -15,13 +15,18 @@ import java.util.UUID;
 public class ChronicHistoryBuilder {
 
 	public Result build(Map<String, String> priorByProblem, List<Appearance> appearances) {
-		validateGraph(priorByProblem);
-		Map<String, List<Appearance>> byProblem = new HashMap<>();
-		for (Appearance appearance : appearances) byProblem.computeIfAbsent(appearance.problemId(), ignored -> new ArrayList<>()).add(appearance);
-		Map<String, String> roots = new HashMap<>();
-		for (String problemId : byProblem.keySet()) roots.put(problemId, root(problemId, priorByProblem));
+		Map<String, String> roots = resolveRoots(priorByProblem);
 		Map<String, List<Appearance>> families = new LinkedHashMap<>();
-		for (Appearance appearance : appearances) families.computeIfAbsent(roots.get(appearance.problemId()), ignored -> new ArrayList<>()).add(appearance);
+		Set<String> appearanceIds = new HashSet<>();
+		for (Appearance appearance : appearances) {
+			if (appearance.pieProblemInspectionId() == null || appearance.pieProblemInspectionId().isBlank())
+				throw new IllegalArgumentException("PIEProblemInspectionID obligatorio en historial");
+			if (!appearanceIds.add(appearance.pieProblemInspectionId()))
+				throw new IllegalArgumentException("PIEProblemInspectionID duplicado en historial: " + appearance.pieProblemInspectionId());
+			String root = roots.get(appearance.problemId());
+			if (root == null) throw new IllegalArgumentException("ProblemID inexistente en historial: " + appearance.problemId());
+			families.computeIfAbsent(root, ignored -> new ArrayList<>()).add(appearance);
+		}
 		List<HistoryRelation> relations = new ArrayList<>();
 		Comparator<Appearance> order = Comparator.comparing(Appearance::siteId, Comparator.nullsFirst(String::compareTo))
 			.thenComparing(Appearance::inspectionDate, Comparator.nullsFirst(LocalDateTime::compareTo))
@@ -41,23 +46,30 @@ public class ChronicHistoryBuilder {
 		return new Result(families.size(), relations);
 	}
 
-	private void validateGraph(Map<String, String> graph) {
-		for (Map.Entry<String, String> edge : graph.entrySet()) {
+	private Map<String, String> resolveRoots(Map<String, String> graph) {
+		Map<String, String> roots = new HashMap<>();
+		for (Map.Entry<String, String> edge : graph.entrySet())
 			if (edge.getValue() != null && !graph.containsKey(edge.getValue()))
 				throw new IllegalArgumentException("PriorProblemID inexistente: " + edge.getValue());
-			Set<String> path = new HashSet<>();
-			String current = edge.getKey();
-			while (current != null) {
-				if (!path.add(current)) throw new IllegalArgumentException("Ciclo crónico detectado en " + current);
+		for (String start : graph.keySet()) {
+			if (roots.containsKey(start)) continue;
+			Map<String, Boolean> path = new LinkedHashMap<>();
+			String current = start;
+			while (current != null && !roots.containsKey(current)) {
+				if (path.putIfAbsent(current, Boolean.TRUE) != null)
+					throw new IllegalArgumentException("Ciclo crónico detectado en " + current);
 				current = graph.get(current);
 			}
+			String root = current == null ? last(path) : roots.get(current);
+			path.keySet().forEach(problem -> roots.put(problem, root));
 		}
+		return roots;
 	}
 
-	private String root(String problemId, Map<String, String> graph) {
-		String current = problemId;
-		while (graph.get(current) != null) current = graph.get(current);
-		return current;
+	private String last(Map<String, Boolean> path) {
+		String last = null;
+		for (String problem : path.keySet()) last = problem;
+		return last;
 	}
 
 	private String deterministicId(String current) {

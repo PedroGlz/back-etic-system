@@ -11,6 +11,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -23,6 +26,9 @@ public class LegacyEtlContext {
 	private final LegacyEtlReportBuilder report;
 	private final int batchSize;
 	private final Map<String, Object> shared = new LinkedHashMap<>();
+	private final Map<String, List<Map<String, Object>>> datasets = new LinkedHashMap<>();
+	private final Map<String, Map<String, Map<String, Object>>> indexes = new LinkedHashMap<>();
+	private final Map<String, Set<String>> persistedSourceIds = new LinkedHashMap<>();
 
 	public LegacyEtlContext(String importId, Path datasetsDirectory, LegacyDatasetStore store,
 		LegacyBatchUpsertRepository repository, LegacyEtlReportBuilder report, int batchSize) {
@@ -34,11 +40,21 @@ public class LegacyEtlContext {
 		this.batchSize = batchSize;
 	}
 
-	public void forEach(String dataset, Consumer<Map<String, Object>> consumer) { store.forEach(datasetsDirectory, dataset, consumer); }
+	public void forEach(String dataset, Consumer<Map<String, Object>> consumer) { dataset(dataset).forEach(consumer); }
 	public Map<String, Map<String, Object>> index(String dataset, String idField) {
-		Map<String, Map<String, Object>> result = new LinkedHashMap<>();
-		forEach(dataset, row -> { String id = text(row, idField); if (id != null) result.put(id, row); });
-		return result;
+		String cacheKey = dataset + '\u0000' + idField;
+		return indexes.computeIfAbsent(cacheKey, ignored -> {
+			Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+			dataset(dataset).forEach(row -> { String id = text(row, idField); if (id != null) result.put(id, row); });
+			return result;
+		});
+	}
+	private List<Map<String, Object>> dataset(String name) {
+		return datasets.computeIfAbsent(name, ignored -> {
+			List<Map<String, Object>> rows = new ArrayList<>();
+			store.forEach(datasetsDirectory, name, rows::add);
+			return rows;
+		});
 	}
 	public void transform(String dataset, String table, String key, Function<Map<String, Object>, Map<String, Object>> mapper) {
 		List<Map<String, Object>> batch = new ArrayList<>(batchSize);
@@ -53,6 +69,14 @@ public class LegacyEtlContext {
 	}
 	public void flush(String table, String key, List<Map<String, Object>> batch) {
 		if (batch.isEmpty()) return;
+		Set<String> seen = persistedSourceIds.computeIfAbsent(table, ignored -> new HashSet<>());
+		for (Map<String, Object> row : batch) {
+			Object rawId = row.get(key);
+			String id = rawId == null ? "" : rawId.toString().trim();
+			if (id.isEmpty()) throw new IllegalStateException("ID obligatorio ausente para " + table + "." + key);
+			if (!seen.add(id.toUpperCase(Locale.ROOT)))
+				throw new IllegalStateException("ID duplicado en el origen para " + table + ": " + id);
+		}
 		LegacyBatchUpsertRepository.BatchResult result = repository.upsert(table, key, batch);
 		report.inserted(table, result.inserted()); report.updated(table, result.updated());
 		result.insertedIds().forEach(id->report.persisted(table,id,"INSERTED"));

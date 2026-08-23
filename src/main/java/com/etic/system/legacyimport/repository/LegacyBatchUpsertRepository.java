@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
@@ -32,7 +33,13 @@ public class LegacyBatchUpsertRepository {
 		String canonicalKey = metadata.canonical(keyColumn);
 		if (canonicalKey == null) throw new IllegalStateException("La tabla " + table + " no contiene " + keyColumn);
 		List<Map<String, Object>> rows = sourceRows.stream().map(row -> filter(row, metadata)).filter(row -> row.containsKey(canonicalKey)).toList();
-		if (rows.isEmpty()) return BatchResult.missingIds(sourceRows.size());
+		if (rows.size() != sourceRows.size())
+			throw new IllegalStateException("No se puede persistir " + table + ": " + (sourceRows.size() - rows.size()) + " registros no contienen " + canonicalKey);
+		for (Map<String, Object> row : rows) {
+			Object id = row.get(canonicalKey);
+			if (id == null || id.toString().isBlank())
+				throw new IllegalStateException("No se puede persistir " + table + ": " + canonicalKey + " es obligatorio");
+		}
 		Map<String, ExistingRow> existing = existingRows(table, canonicalKey, metadata, rows.stream().map(row -> row.get(canonicalKey)).toList());
 		List<Map<String,Object>> inserts=new ArrayList<>(), updates=new ArrayList<>(); List<SkippedId> skipped=new ArrayList<>();
 		for(Map<String,Object> row:rows){String id=String.valueOf(row.get(canonicalKey));ExistingRow destination=existing.get(normalizedKey(id));
@@ -68,8 +75,10 @@ public class LegacyBatchUpsertRepository {
 	private void executeBatch(String table, String key, List<String> columns, List<Map<String, Object>> rows,boolean update) {
 		if(rows.isEmpty())return;
 		String placeholders = String.join(",", columns.stream().map(ignored -> "?").toList());
-		String sql;if(update){List<String> mutable=columns.stream().filter(column->!column.equalsIgnoreCase(key)).toList();if(mutable.isEmpty())return;sql="UPDATE "+table+" SET "+String.join(",",mutable.stream().map(column->column+"=?").toList())+" WHERE "+key+"=?";jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bindUpdate(statement,mutable,key,row));}
-		else{sql="INSERT INTO "+table+" ("+String.join(",",columns)+") VALUES ("+placeholders+")";jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bind(statement,columns,row));}
+		String sql;int[][] results;if(update){List<String> mutable=columns.stream().filter(column->!column.equalsIgnoreCase(key)).toList();if(mutable.isEmpty())return;sql="UPDATE "+table+" SET "+String.join(",",mutable.stream().map(column->column+"=?").toList())+" WHERE "+key+"=?";results=jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bindUpdate(statement,mutable,key,row));}
+		else{sql="INSERT INTO "+table+" ("+String.join(",",columns)+") VALUES ("+placeholders+")";results=jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bind(statement,columns,row));}
+		long executed=java.util.Arrays.stream(results).flatMapToInt(java.util.Arrays::stream).peek(value->{if(value==Statement.EXECUTE_FAILED)throw new IllegalStateException("MySQL rechazó un lote de "+table);}).count();
+		if(executed!=rows.size())throw new IllegalStateException("MySQL ejecutó "+executed+" de "+rows.size()+" operaciones en "+table);
 	}
 
 	private void bind(PreparedStatement statement, List<String> columns, Map<String, Object> row) throws SQLException {

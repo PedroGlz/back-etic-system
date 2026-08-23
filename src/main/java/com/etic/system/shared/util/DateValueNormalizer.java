@@ -2,12 +2,14 @@ package com.etic.system.shared.util;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public final class DateValueNormalizer {
 
 	private static final String ZERO_DATE = "0000-00-00";
 	private static final String ZERO_DATETIME = "0000-00-00 00:00:00";
 	private static final String ZERO_DATETIME_ISO = "0000-00-00T00:00:00";
+	private static final DateTimeFormatter LEGACY_DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
 	private DateValueNormalizer() {
 	}
@@ -15,7 +17,13 @@ public final class DateValueNormalizer {
 	public static Object normalizeDatabaseDateValue(Object value) {
 		if (value instanceof String text) {
 			String normalized = text.trim();
-			return isBlankOrZeroDate(normalized) ? null : normalized;
+			if (isBlankOrZeroDate(normalized)) {
+				return null;
+			}
+			if (normalized.matches("\\d{2}/\\d{2}/\\d{4}")) {
+				return LocalDate.parse(normalized, LEGACY_DATE_FORMAT).toString();
+			}
+			return normalized;
 		}
 		return value;
 	}
