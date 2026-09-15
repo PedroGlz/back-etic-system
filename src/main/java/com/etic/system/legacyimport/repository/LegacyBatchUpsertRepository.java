@@ -2,6 +2,8 @@ package com.etic.system.legacyimport.repository;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -21,13 +23,19 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Repository
 public class LegacyBatchUpsertRepository {
+	private static final Logger log=LoggerFactory.getLogger(LegacyBatchUpsertRepository.class);
 
 	private final JdbcTemplate jdbc;
 	private final Map<String, TableMetadata> metadataCache = new ConcurrentHashMap<>();
+	private final Map<String, Boolean> tableExistsCache = new ConcurrentHashMap<>();
 
 	public LegacyBatchUpsertRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
 	public BatchResult upsert(String table, String keyColumn, List<Map<String, Object>> sourceRows) {
+		return upsert(table,keyColumn,sourceRows,500);
+	}
+
+	public BatchResult upsert(String table, String keyColumn, List<Map<String, Object>> sourceRows, int batchSize) {
 		if (sourceRows.isEmpty()) return BatchResult.empty();
 		TableMetadata metadata = metadata(table);
 		String canonicalKey = metadata.canonical(keyColumn);
@@ -40,7 +48,9 @@ public class LegacyBatchUpsertRepository {
 			if (id == null || id.toString().isBlank())
 				throw new IllegalStateException("No se puede persistir " + table + ": " + canonicalKey + " es obligatorio");
 		}
+		long lookupStarted=System.nanoTime();
 		Map<String, ExistingRow> existing = existingRows(table, canonicalKey, metadata, rows.stream().map(row -> row.get(canonicalKey)).toList());
+		long existingLookupMs=elapsedMs(lookupStarted);
 		List<Map<String,Object>> inserts=new ArrayList<>(), updates=new ArrayList<>(); List<SkippedId> skipped=new ArrayList<>();
 		for(Map<String,Object> row:rows){String id=String.valueOf(row.get(canonicalKey));ExistingRow destination=existing.get(normalizedKey(id));
 			if(destination==null){inserts.add(row);continue;}
@@ -51,35 +61,40 @@ public class LegacyBatchUpsertRepository {
 			if(sourceDate.isEqual(destinationDate))skipped.add(new SkippedId(id,SkipReason.SAME_DATE,sourceDate,destinationDate));
 			else skipped.add(new SkippedId(id,SkipReason.DESTINATION_NEWER,sourceDate,destinationDate));
 		}
-		executeGroups(table,canonicalKey,inserts,false);executeGroups(table,canonicalKey,updates,true);
+		long writeStarted=System.nanoTime();int batches=executeGroups(table,canonicalKey,inserts,false,batchSize)+executeGroups(table,canonicalKey,updates,true,batchSize);long writeMs=elapsedMs(writeStarted);
 		List<Object> affected=new ArrayList<>();inserts.forEach(row->affected.add(row.get(canonicalKey)));updates.forEach(row->affected.add(row.get(canonicalKey)));
-		Set<String> persisted=existingKeyStrings(table,canonicalKey,affected);if(persisted.size()!=affected.size())throw new IllegalStateException("MySQL no confirmó todos los IDs escritos en "+table);
+		long verificationStarted=System.nanoTime();Set<String> persisted=existingKeyStrings(table,canonicalKey,affected);long verificationMs=elapsedMs(verificationStarted);if(persisted.size()!=affected.size())throw new IllegalStateException("MySQL no confirmó todos los IDs escritos en "+table);
 		long missingId=sourceRows.size()-rows.size();
+		log.info("LEGACY IMPORT TABLE - {} rows={} existingLookupMs={} writeMs={} verificationMs={} batches={}",table,rows.size(),existingLookupMs,writeMs,verificationMs,batches);
 		return new BatchResult(inserts.size(),updates.size(),missingId,skipped,
 			inserts.stream().map(row->String.valueOf(row.get(canonicalKey))).toList(),
-			updates.stream().map(row->String.valueOf(row.get(canonicalKey))).toList());
+			updates.stream().map(row->String.valueOf(row.get(canonicalKey))).toList(),batches);
 	}
 
 	public boolean tableExists(String table) {
-		Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", Integer.class, table);
-		return count != null && count > 0;
+		return tableExistsCache.computeIfAbsent(table, name -> {
+			Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", Integer.class, name);
+			return count != null && count > 0;
+		});
 	}
 
-	public void updateDerived(String table,String keyColumn,List<Map<String,Object>> sourceRows){if(sourceRows.isEmpty())return;TableMetadata metadata=metadata(table);String key=metadata.canonical(keyColumn);if(key==null)throw new IllegalStateException("La tabla "+table+" no contiene "+keyColumn);List<Map<String,Object>> rows=sourceRows.stream().map(row->filter(row,metadata)).filter(row->row.containsKey(key)).toList();executeGroups(table,key,rows,true);Set<String> persisted=existingKeyStrings(table,key,rows.stream().map(row->row.get(key)).toList());if(persisted.size()!=rows.size())throw new IllegalStateException("MySQL no confirmó la actualización derivada en "+table);}
+	public void updateDerived(String table,String keyColumn,List<Map<String,Object>> sourceRows){if(sourceRows.isEmpty())return;TableMetadata metadata=metadata(table);String key=metadata.canonical(keyColumn);if(key==null)throw new IllegalStateException("La tabla "+table+" no contiene "+keyColumn);List<Map<String,Object>> rows=sourceRows.stream().map(row->filter(row,metadata)).filter(row->row.containsKey(key)).toList();executeGroups(table,key,rows,true,500);Set<String> persisted=existingKeyStrings(table,key,rows.stream().map(row->row.get(key)).toList());if(persisted.size()!=rows.size())throw new IllegalStateException("MySQL no confirmó la actualización derivada en "+table);}
 
 	public List<Map<String, Object>> query(String sql, Object... arguments) {
 		return jdbc.queryForList(sql, arguments);
 	}
 
-	private void executeGroups(String table,String key,List<Map<String,Object>> rows,boolean update){Map<List<String>,List<Map<String,Object>>> groups=new LinkedHashMap<>();for(Map<String,Object> row:rows)groups.computeIfAbsent(List.copyOf(row.keySet()),ignored->new ArrayList<>()).add(row);for(var group:groups.entrySet())executeBatch(table,key,group.getKey(),group.getValue(),update);}
-	private void executeBatch(String table, String key, List<String> columns, List<Map<String, Object>> rows,boolean update) {
-		if(rows.isEmpty())return;
+	private int executeGroups(String table,String key,List<Map<String,Object>> rows,boolean update,int batchSize){Map<List<String>,List<Map<String,Object>>> groups=new LinkedHashMap<>();for(Map<String,Object> row:rows)groups.computeIfAbsent(List.copyOf(row.keySet()),ignored->new ArrayList<>()).add(row);int batches=0;for(var group:groups.entrySet())batches+=executeBatch(table,key,group.getKey(),group.getValue(),update,batchSize);return batches;}
+	private int executeBatch(String table, String key, List<String> columns, List<Map<String, Object>> rows,boolean update,int batchSize) {
+		if(rows.isEmpty())return 0;
 		String placeholders = String.join(",", columns.stream().map(ignored -> "?").toList());
-		String sql;int[][] results;if(update){List<String> mutable=columns.stream().filter(column->!column.equalsIgnoreCase(key)).toList();if(mutable.isEmpty())return;sql="UPDATE "+table+" SET "+String.join(",",mutable.stream().map(column->column+"=?").toList())+" WHERE "+key+"=?";results=jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bindUpdate(statement,mutable,key,row));}
-		else{sql="INSERT INTO "+table+" ("+String.join(",",columns)+") VALUES ("+placeholders+")";results=jdbc.batchUpdate(sql,rows,rows.size(),(statement,row)->bind(statement,columns,row));}
+		String sql;int[][] results;if(update){List<String> mutable=columns.stream().filter(column->!column.equalsIgnoreCase(key)).toList();if(mutable.isEmpty())return 0;sql="UPDATE "+table+" SET "+String.join(",",mutable.stream().map(column->column+"=?").toList())+" WHERE "+key+"=?";results=jdbc.batchUpdate(sql,rows,batchSize,(statement,row)->bindUpdate(statement,mutable,key,row));}
+		else{sql="INSERT INTO "+table+" ("+String.join(",",columns)+") VALUES ("+placeholders+")";results=jdbc.batchUpdate(sql,rows,batchSize,(statement,row)->bind(statement,columns,row));}
 		long executed=java.util.Arrays.stream(results).flatMapToInt(java.util.Arrays::stream).peek(value->{if(value==Statement.EXECUTE_FAILED)throw new IllegalStateException("MySQL rechazó un lote de "+table);}).count();
 		if(executed!=rows.size())throw new IllegalStateException("MySQL ejecutó "+executed+" de "+rows.size()+" operaciones en "+table);
+		return results.length;
 	}
+	private long elapsedMs(long started){return (System.nanoTime()-started)/1_000_000L;}
 
 	private void bind(PreparedStatement statement, List<String> columns, Map<String, Object> row) throws SQLException {
 		for (int index = 0; index < columns.size(); index++) statement.setObject(index + 1, row.get(columns.get(index)));
@@ -139,5 +154,5 @@ public class LegacyBatchUpsertRepository {
 	private record ExistingRow(LocalDateTime comparisonDate){}
 	public enum SkipReason{DESTINATION_NEWER,SAME_DATE,NO_COMPARABLE_DATE,MISSING_ID}
 	public record SkippedId(String id,SkipReason reason,LocalDateTime sourceDate,LocalDateTime destinationDate){}
-	public record BatchResult(long inserted,long updated,long missingId,List<SkippedId> skippedIds,List<String> insertedIds,List<String> updatedIds){public static BatchResult empty(){return new BatchResult(0,0,0,List.of(),List.of(),List.of());}public static BatchResult missingIds(long count){return new BatchResult(0,0,count,List.of(),List.of(),List.of());}public long skipped(){return missingId+skippedIds.size();}}
+	public record BatchResult(long inserted,long updated,long missingId,List<SkippedId> skippedIds,List<String> insertedIds,List<String> updatedIds,int batchesExecuted){public static BatchResult empty(){return new BatchResult(0,0,0,List.of(),List.of(),List.of(),0);}public static BatchResult missingIds(long count){return new BatchResult(0,0,count,List.of(),List.of(),List.of(),0);}public long skipped(){return missingId+skippedIds.size();}}
 }

@@ -70,6 +70,23 @@ class LegacySqlScriptParserTest {
 	}
 
 	@Test
+	void analyzesAndStagesTheSameDatasetsInOnePass(@TempDir Path temporary) throws Exception {
+		Path source=temporary.resolve("fixture.sql"),staged=temporary.resolve("staged");
+		try(InputStream fixture=getClass().getResourceAsStream("/fixtures/etic-legacy-v1-small.sql")){
+			Files.copy(fixture,source);
+		}
+		LegacyImportAnalysis result=parser.analyzeAndStage(source,staged,100);
+		assertThat(LegacyJsonContract.REQUIRED_DATASETS).allSatisfy(dataset->assertThat(staged.resolve(dataset+".ndjson")).isRegularFile());
+		assertThat(lineCount(staged.resolve("customers.ndjson"))).isEqualTo(result.clientes());
+		assertThat(lineCount(staged.resolve("locations.ndjson"))).isEqualTo(result.ubicaciones());
+		assertThat(lineCount(staged.resolve("locationBaselines.ndjson"))).isEqualTo(result.lineasBase());
+		assertThat(lineCount(staged.resolve("problems.ndjson"))).isEqualTo(result.problemas());
+		assertThat(lineCount(staged.resolve("pieProblemInspections.ndjson"))).isEqualTo(result.aparicionesPie());
+	}
+
+	private long lineCount(Path path) throws Exception { try(var lines=Files.lines(path)){return lines.count();} }
+
+	@Test
 	void parsesEmptyStringAndInsertWithoutInto() {
 		String sql = "INSERT [dbo].[Customers] ([CustomerID],[Name]) VALUES ('C1','');";
 		LegacyImportAnalysis result = parser.analyze(new ByteArrayInputStream(sql.getBytes(StandardCharsets.UTF_8)), 10);

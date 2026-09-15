@@ -2,7 +2,6 @@ package com.etic.system.legacyimport.transform;
 
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -13,8 +12,6 @@ public class DefaultInspectionTransformService implements InspectionTransformSer
 	@Override public void transform(LegacyEtlContext c) {
 		@SuppressWarnings("unchecked") Map<String,String> groups=(Map<String,String>)c.shared().getOrDefault("groupByCustomer",Map.of());
 		Map<String,Map<String,Object>> inspections=c.index("inspections","InspectionID");
-		Map<String,String> units=new HashMap<>();
-		inspections.forEach((id,row)->units.put(id,c.text(row,"TemperatureUnit")));
 		c.transform("inspections","inspecciones","Id_Inspeccion",r->c.row(
 			"Id_Inspeccion",c.text(r,"InspectionID"),"Id_Sitio",c.text(r,"CustomerSiteID"),"Id_Cliente",c.text(r,"CustomerID"),
 			"Id_Grupo_Sitios",groups.get(c.text(r,"CustomerID")),"Id_Status_Inspeccion",c.text(r,"InspectionStatusID"),
@@ -33,7 +30,6 @@ public class DefaultInspectionTransformService implements InspectionTransformSer
 				"Notas_Inspeccion",c.text(r,"TestStatusNote"),"Estatus","Activo","Creado_Por",c.text(r,"CreateUserID"),
 				"Fecha_Creacion",c.value(r,"CreateDate"),"Modificado_Por",c.text(r,"LastUserID"),"Fecha_Mod",c.value(r,"LastModified"));
 		});
-		c.shared().put("inspections",inspections); c.shared().put("temperatureUnits",units);
 	}
 	private boolean inactive(Map<String,Object> row){Object value=row.get("DeleteFlag");return value!=null&&!"0".equals(value.toString());}
 }

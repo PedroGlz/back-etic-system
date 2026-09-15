@@ -48,14 +48,20 @@ public class LegacyImportController {
 	}
 
 	@PostMapping("/{id}/execute")
-	public LegacyEtlReport execute(@PathVariable String id, HttpSession session) {
-		return executionService.execute(id, requireAdministrator(session).id());
+	@ResponseStatus(HttpStatus.ACCEPTED)
+	public void execute(@PathVariable String id, HttpSession session) {
+		executionService.start(id, requireAdministrator(session).id());
+	}
+
+	@GetMapping("/active")
+	public ResponseEntity<JobStatusResponse> active(HttpSession session){
+		return service.active(requireAdministrator(session).id()).map(job->ResponseEntity.ok(statusResponse(job))).orElseGet(()->ResponseEntity.noContent().build());
 	}
 
 	@GetMapping("/{id}")
 	public JobStatusResponse status(@PathVariable String id, HttpSession session) {
 		LegacyImportJob job=service.status(id,requireAdministrator(session).id());
-		return new JobStatusResponse(job.id(),job.status(),job.phase(),job.progress(),job.errorMessage());
+		return statusResponse(job);
 	}
 
 	@GetMapping("/{id}/result")
@@ -80,4 +86,5 @@ public class LegacyImportController {
 	}
 
 	public record JobStatusResponse(String id,LegacyImportStatus status,String phase,int progress,String errorMessage) {}
+	private JobStatusResponse statusResponse(LegacyImportJob job){return new JobStatusResponse(job.id(),job.status(),job.phase(),job.progress(),job.errorMessage());}
 }

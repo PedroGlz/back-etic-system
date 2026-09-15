@@ -35,7 +35,10 @@ class LegacyRealMySqlIntegrationTest {
 			assertExists("ubicaciones","Id_Ubicacion","L1","L2","L3");assertExists("inspecciones","Id_Inspeccion","I1","I2");
 			assertExists("inspecciones_det","Id_Inspeccion_Det","ID1","ID2");assertExists("linea_base","Id_Linea_Base","B1");
 			assertExists("problemas","Id_Problema","PIE0","PIE1","PIE2");
-			assertThat(repository.query("SELECT MTA FROM linea_base WHERE Id_Linea_Base=?","B1").getFirst().get("MTA")).isNotNull();
+			Map<String,Object> baseline=repository.query("SELECT MTA,Temp_max,Temp_amb FROM linea_base WHERE Id_Linea_Base=?","B1").getFirst();
+			assertThat(((Number)baseline.get("MTA")).doubleValue()).isEqualTo(104D);
+			assertThat(((Number)baseline.get("Temp_max")).doubleValue()).isEqualTo(86D);
+			assertThat(((Number)baseline.get("Temp_amb")).doubleValue()).isEqualTo(77D);
 			assertThat(first.historyRelations()).isPositive();
 			assertThat(first.tables()).allSatisfy(table->assertThat(table.source()).isEqualTo(table.inserted()+table.updated()+table.skipped()+table.errors()));
 			LegacyEtlReport second=execution.execute(job.id(),user);

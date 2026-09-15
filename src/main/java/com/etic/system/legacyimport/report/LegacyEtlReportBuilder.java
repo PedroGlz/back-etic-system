@@ -35,6 +35,7 @@ public class LegacyEtlReportBuilder {
 	public void warning(String table, String message) { stats(table).warnings++; if(warnings.size()<MAX_WARNING_DETAILS) warnings.add(message); }
 	public void error(String table) { stats(table).errors++; }
 	public void orphan(String table) { stats(table).orphans++; }
+	public void orphans(String table, long count) { stats(table).orphans += count; }
 	public void legacyProblems(long value) { legacyProblems = value; }
 	public void problemInspections(long value) { problemInspections = value; }
 	public void pieProblemInspections(long value) { pieProblemInspections = value; }
@@ -52,12 +53,14 @@ public class LegacyEtlReportBuilder {
 	}
 	public Checkpoint checkpoint() {
 		Map<String,MutableStats> saved=new LinkedHashMap<>();tables.forEach((table,stats)->saved.put(table,stats.copy()));
-		return new Checkpoint(saved,new ArrayList<>(warnings),new ArrayList<>(outcomes),legacyProblems,problemInspections,pieProblemInspections,targetProblems,chronicFamilies,historyRelations,additionalPhotos,unknownTemperatureUnits);
+		return new Checkpoint(saved,warnings.size(),outcomes.size(),legacyProblems,problemInspections,pieProblemInspections,targetProblems,chronicFamilies,historyRelations,additionalPhotos,unknownTemperatureUnits);
 	}
 	public void restore(Checkpoint value) {
-		tables.clear();value.tables.forEach((table,stats)->tables.put(table,stats.copy()));warnings.clear();warnings.addAll(value.warnings);outcomes.clear();outcomes.addAll(value.outcomes);
+		tables.clear();value.tables.forEach((table,stats)->tables.put(table,stats.copy()));truncate(warnings,value.warningSize);truncate(outcomes,value.outcomeSize);
 		legacyProblems=value.legacyProblems;problemInspections=value.problemInspections;pieProblemInspections=value.pieProblemInspections;targetProblems=value.targetProblems;chronicFamilies=value.chronicFamilies;historyRelations=value.historyRelations;additionalPhotos=value.additionalPhotos;unknownTemperatureUnits=value.unknownTemperatureUnits;
 	}
+	private void truncate(List<?> values,int size){if(values.size()>size)values.subList(size,values.size()).clear();}
+	public long sourceCount(){return tables.values().stream().mapToLong(stats->stats.source).sum();}
 
 	public LegacyEtlReport build() {
 		List<TableReconciliation> rows = tables.entrySet().stream().map(entry -> entry.getValue().toRecord(entry.getKey())).toList();
@@ -75,8 +78,8 @@ public class LegacyEtlReportBuilder {
 		MutableStats copy(){MutableStats value=new MutableStats();value.source=source;value.inserted=inserted;value.updated=updated;value.skipped=skipped;value.skippedDestinationNewer=skippedDestinationNewer;value.skippedSameDate=skippedSameDate;value.skippedNoComparableDate=skippedNoComparableDate;value.warnings=warnings;value.errors=errors;value.orphans=orphans;return value;}
 	}
 	public static final class Checkpoint {
-		private final Map<String,MutableStats> tables;private final List<String> warnings;private final List<LegacyRecordOutcome> outcomes;
+		private final Map<String,MutableStats> tables;private final int warningSize,outcomeSize;
 		private final long legacyProblems,problemInspections,pieProblemInspections,targetProblems,chronicFamilies,historyRelations,additionalPhotos,unknownTemperatureUnits;
-		private Checkpoint(Map<String,MutableStats> tables,List<String> warnings,List<LegacyRecordOutcome> outcomes,long legacyProblems,long problemInspections,long pieProblemInspections,long targetProblems,long chronicFamilies,long historyRelations,long additionalPhotos,long unknownTemperatureUnits){this.tables=tables;this.warnings=warnings;this.outcomes=outcomes;this.legacyProblems=legacyProblems;this.problemInspections=problemInspections;this.pieProblemInspections=pieProblemInspections;this.targetProblems=targetProblems;this.chronicFamilies=chronicFamilies;this.historyRelations=historyRelations;this.additionalPhotos=additionalPhotos;this.unknownTemperatureUnits=unknownTemperatureUnits;}
+		private Checkpoint(Map<String,MutableStats> tables,int warningSize,int outcomeSize,long legacyProblems,long problemInspections,long pieProblemInspections,long targetProblems,long chronicFamilies,long historyRelations,long additionalPhotos,long unknownTemperatureUnits){this.tables=tables;this.warningSize=warningSize;this.outcomeSize=outcomeSize;this.legacyProblems=legacyProblems;this.problemInspections=problemInspections;this.pieProblemInspections=pieProblemInspections;this.targetProblems=targetProblems;this.chronicFamilies=chronicFamilies;this.historyRelations=historyRelations;this.additionalPhotos=additionalPhotos;this.unknownTemperatureUnits=unknownTemperatureUnits;}
 	}
 }

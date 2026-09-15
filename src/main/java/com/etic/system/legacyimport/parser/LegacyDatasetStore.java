@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.etic.system.legacyimport.model.LegacyImportAnalysis;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -21,6 +22,7 @@ import java.util.function.Consumer;
 
 @Component
 public class LegacyDatasetStore {
+	private static final String ANALYSIS_FILE = "analysis.json";
 
 	private final ObjectMapper mapper;
 	private final JsonFactory factory;
@@ -51,6 +53,29 @@ public class LegacyDatasetStore {
 		} catch (IOException exception) {
 			throw new LegacyJsonFormatException("No fue posible preparar datasets legacy", exception);
 		}
+	}
+
+	public LegacyImportAnalysis analyzeAndStage(Path source, Path directory, long maxRecords) {
+		LegacyImportAnalysis analysis = sqlParser.analyzeAndStage(source, directory, maxRecords);
+		try {
+			mapper.writerWithDefaultPrettyPrinter().writeValue(directory.resolve(ANALYSIS_FILE).toFile(), analysis);
+			return analysis;
+		} catch (IOException exception) {
+			throw new LegacyJsonFormatException("No fue posible guardar el análisis legacy", exception);
+		}
+	}
+
+	public LegacyImportAnalysis readAnalysis(Path directory) {
+		try {
+			return mapper.readValue(directory.resolve(ANALYSIS_FILE).toFile(), LegacyImportAnalysis.class);
+		} catch (IOException exception) {
+			throw new LegacyJsonFormatException("No fue posible recuperar el análisis legacy", exception);
+		}
+	}
+
+	public boolean isReady(Path directory) {
+		if (!Files.isRegularFile(directory.resolve(ANALYSIS_FILE))) return false;
+		return LegacyJsonContract.REQUIRED_DATASETS.stream().allMatch(dataset -> Files.isRegularFile(datasetPath(directory, dataset)));
 	}
 
 	public void forEach(Path directory, String dataset, Consumer<Map<String, Object>> consumer) {

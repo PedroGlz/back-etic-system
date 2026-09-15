@@ -29,6 +29,8 @@ public class LegacyEtlContext {
 	private final Map<String, List<Map<String, Object>>> datasets = new LinkedHashMap<>();
 	private final Map<String, Map<String, Map<String, Object>>> indexes = new LinkedHashMap<>();
 	private final Map<String, Set<String>> persistedSourceIds = new LinkedHashMap<>();
+	private final Map<String, PendingTable> pendingTables = new LinkedHashMap<>();
+	private long batches;
 
 	public LegacyEtlContext(String importId, Path datasetsDirectory, LegacyDatasetStore store,
 		LegacyBatchUpsertRepository repository, LegacyEtlReportBuilder report, int batchSize) {
@@ -56,6 +58,17 @@ public class LegacyEtlContext {
 			return rows;
 		});
 	}
+	public void release(String... names) {
+		for (String name : names) {
+			datasets.remove(name);
+			String prefix = name + '\u0000';
+			indexes.keySet().removeIf(key -> key.startsWith(prefix));
+		}
+	}
+	public void releaseShared(String... names) { for (String name : names) shared.remove(name); }
+	public void finishPhase() { persistedSourceIds.clear(); }
+	public long batches() { return batches; }
+	public void releaseAll() { datasets.clear(); indexes.clear(); shared.clear(); persistedSourceIds.clear(); pendingTables.clear(); }
 	public void transform(String dataset, String table, String key, Function<Map<String, Object>, Map<String, Object>> mapper) {
 		List<Map<String, Object>> batch = new ArrayList<>(batchSize);
 		forEach(dataset, source -> {
@@ -77,13 +90,22 @@ public class LegacyEtlContext {
 			if (!seen.add(id.toUpperCase(Locale.ROOT)))
 				throw new IllegalStateException("ID duplicado en el origen para " + table + ": " + id);
 		}
-		LegacyBatchUpsertRepository.BatchResult result = repository.upsert(table, key, batch);
-		report.inserted(table, result.inserted()); report.updated(table, result.updated());
-		result.insertedIds().forEach(id->report.persisted(table,id,"INSERTED"));
-		result.updatedIds().forEach(id->report.persisted(table,id,"UPDATED"));
-		for (long index = 0; index < result.missingId(); index++) report.skipped(table);
-		result.skippedIds().forEach(item->report.skipped(table,item.id(),item.reason().name(),item.sourceDate(),item.destinationDate()));
-		batch.clear();
+		PendingTable pending=pendingTables.computeIfAbsent(table,ignored->new PendingTable(key,new ArrayList<>()));
+		if(!pending.key().equalsIgnoreCase(key))throw new IllegalStateException("Clave inconsistente para "+table);
+		pending.rows().addAll(batch);batch.clear();
+	}
+	public void flushPending() {
+		for(Map.Entry<String,PendingTable> entry:pendingTables.entrySet()){
+			String table=entry.getKey();PendingTable pending=entry.getValue();
+			LegacyBatchUpsertRepository.BatchResult result=repository.upsert(table,pending.key(),pending.rows(),batchSize);
+			batches+=result.batchesExecuted();
+			report.inserted(table,result.inserted());report.updated(table,result.updated());
+			result.insertedIds().forEach(id->report.persisted(table,id,"INSERTED"));
+			result.updatedIds().forEach(id->report.persisted(table,id,"UPDATED"));
+			for(long index=0;index<result.missingId();index++)report.skipped(table);
+			result.skippedIds().forEach(item->report.skipped(table,item.id(),item.reason().name(),item.sourceDate(),item.destinationDate()));
+		}
+		pendingTables.clear();
 	}
 	public String text(Map<String, Object> row, String key) {
 		Object value = row.get(key); if (value == null || value.toString().isBlank()) return null; return value.toString().trim();
@@ -106,4 +128,5 @@ public class LegacyEtlContext {
 	public LegacyEtlReportBuilder report() { return report; }
 	public LegacyBatchUpsertRepository repository() { return repository; }
 	public Map<String, Object> shared() { return shared; }
+	private record PendingTable(String key,List<Map<String,Object>> rows){}
 }

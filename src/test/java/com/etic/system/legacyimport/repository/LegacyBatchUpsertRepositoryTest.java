@@ -23,8 +23,10 @@ class LegacyBatchUpsertRepositoryTest {
 			source("C1","2026-01-01T00:00:00",null),source("C2","2026-05-01T00:00:00",null),source("C3","2025-01-01T00:00:00",null),source("C4","2026-01-01T00:00:00",null),source("C5",null,"2026-06-01T00:00:00")));
 		assertThat(result.inserted()).isEqualTo(1);assertThat(result.updated()).isEqualTo(2);
 		assertThat(result.skippedIds()).extracting(LegacyBatchUpsertRepository.SkippedId::reason).containsExactly(LegacyBatchUpsertRepository.SkipReason.DESTINATION_NEWER,LegacyBatchUpsertRepository.SkipReason.SAME_DATE);
-		verify(jdbc).batchUpdate(startsWith("INSERT INTO problemas"),anyList(),eq(1),any(ParameterizedPreparedStatementSetter.class));
-		verify(jdbc,times(2)).batchUpdate(startsWith("UPDATE problemas SET"),anyList(),eq(1),any(ParameterizedPreparedStatementSetter.class));
+		verify(jdbc).batchUpdate(startsWith("INSERT INTO problemas"),anyList(),eq(500),any(ParameterizedPreparedStatementSetter.class));
+		verify(jdbc,times(2)).batchUpdate(startsWith("UPDATE problemas SET"),anyList(),eq(500),any(ParameterizedPreparedStatementSetter.class));
+		verify(jdbc,times(1)).queryForList(startsWith("SELECT Id_Problema,Fecha_Mod,Fecha_Creacion"),any(Object[].class));
+		verify(jdbc,times(1)).queryForList(startsWith("SELECT Id_Problema FROM"),eq(Object.class),any(Object[].class));
 	}
 	@Test void normalizesIdentifiersToUppercase(){
 		JdbcTemplate jdbc=mock(JdbcTemplate.class);
@@ -32,7 +34,7 @@ class LegacyBatchUpsertRepositoryTest {
 		when(jdbc.queryForList("SHOW COLUMNS FROM problemas")).thenReturn(List.of(Map.of("Field","Id_Problema"),Map.of("Field","Id_Falla"),Map.of("Field","Component_Comment")));
 		when(jdbc.queryForList(startsWith("SELECT Id_Problema FROM"),eq(Object.class),any(Object[].class))).thenReturn(List.of("ABC"));
 		new LegacyBatchUpsertRepository(jdbc).upsert("problemas","Id_Problema",List.of(Map.of("Id_Problema","abc","Id_Falla","fault-1","Component_Comment","Conservar Texto")));
-		verify(jdbc).batchUpdate(startsWith("INSERT INTO problemas"),argThat((List<Map<String,Object>> rows)->"ABC".equals(rows.get(0).get("Id_Problema"))&&"FAULT-1".equals(rows.get(0).get("Id_Falla"))&&"Conservar Texto".equals(rows.get(0).get("Component_Comment"))),eq(1),any(ParameterizedPreparedStatementSetter.class));
+		verify(jdbc).batchUpdate(startsWith("INSERT INTO problemas"),argThat((List<Map<String,Object>> rows)->"ABC".equals(rows.get(0).get("Id_Problema"))&&"FAULT-1".equals(rows.get(0).get("Id_Falla"))&&"Conservar Texto".equals(rows.get(0).get("Component_Comment"))),eq(500),any(ParameterizedPreparedStatementSetter.class));
 	}
 	@Test void rejectsRowsWithoutRequiredTargetId(){
 		JdbcTemplate jdbc=mock(JdbcTemplate.class);

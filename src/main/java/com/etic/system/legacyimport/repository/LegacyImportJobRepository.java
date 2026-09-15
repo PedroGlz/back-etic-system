@@ -89,6 +89,20 @@ public class LegacyImportJobRepository {
 		)).stream().findFirst();
 	}
 
+	public Optional<LegacyImportJob> findActiveByUser(String createdBy) {
+		return jdbc.query("""
+			SELECT id, filename, status, phase, progress, started_at, finished_at, error_message, created_by
+			FROM legacy_import_jobs
+			WHERE created_by = :createdBy
+			  AND status IN ('UPLOADED','VALIDATING','READY','PROCESSING','VALIDATING_RESULT')
+			ORDER BY created_at DESC LIMIT 1
+			""",Map.of("createdBy",createdBy),(rs,rowNum)->new LegacyImportJob(
+			rs.getString("id"),rs.getString("filename"),LegacyImportStatus.valueOf(rs.getString("status")),rs.getString("phase"),rs.getInt("progress"),
+			rs.getTimestamp("started_at")==null?null:rs.getTimestamp("started_at").toLocalDateTime(),
+			rs.getTimestamp("finished_at")==null?null:rs.getTimestamp("finished_at").toLocalDateTime(),rs.getString("error_message"),rs.getString("created_by")
+		)).stream().findFirst();
+	}
+
 	public boolean claimForExecution(String id, String createdBy) {
 		MapSqlParameterSource parameters = new MapSqlParameterSource().addValue("id", id).addValue("createdBy", createdBy)
 			.addValue("status", LegacyImportStatus.PROCESSING.name()).addValue("phase", "VALIDATION");

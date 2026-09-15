@@ -37,24 +37,63 @@ public class LegacySqlScriptParser {
 		return accumulator.finishSql();
 	}
 
+	public LegacyImportAnalysis analyzeAndStage(Path source, Path directory, long maxRecords) {
+		LegacyImportAccumulator accumulator = new LegacyImportAccumulator(maxRecords);
+		try {
+			Files.createDirectories(directory);
+			Map<String, BufferedWriter> writers = openWriters(directory);
+			try {
+				try (InputStream input = Files.newInputStream(source)) {
+					parse(input, (dataset, row) -> {
+						accumulator.accept(dataset, row);
+						writeRow(writers.get(dataset), row);
+					});
+				}
+			} finally {
+				closeWriters(writers);
+			}
+			return accumulator.finishSql();
+		} catch (IOException exception) {
+			throw new LegacyJsonFormatException("No fue posible analizar y preparar los datos del SQL legacy", exception);
+		}
+	}
+
 	public void stage(Path source, Path directory) {
 		try {
 			Files.createDirectories(directory);
-			Map<String, BufferedWriter> writers = new LinkedHashMap<>();
+			Map<String, BufferedWriter> writers = openWriters(directory);
 			try {
-				for (String dataset : LegacyJsonContract.REQUIRED_DATASETS) {
-					writers.put(dataset, Files.newBufferedWriter(directory.resolve(dataset + ".ndjson"), StandardCharsets.UTF_8,
-						StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING));
-				}
 				try (InputStream input = Files.newInputStream(source)) {
 					parse(input, (dataset, row) -> writeRow(writers.get(dataset), row));
 				}
 			} finally {
-				for (BufferedWriter writer : writers.values()) writer.close();
+				closeWriters(writers);
 			}
 		} catch (IOException exception) {
 			throw new LegacyJsonFormatException("No fue posible preparar los datos del SQL legacy", exception);
 		}
+	}
+
+	private Map<String, BufferedWriter> openWriters(Path directory) throws IOException {
+		Map<String, BufferedWriter> writers = new LinkedHashMap<>();
+		try {
+			for (String dataset : LegacyJsonContract.REQUIRED_DATASETS) {
+				writers.put(dataset, Files.newBufferedWriter(directory.resolve(dataset + ".ndjson"), StandardCharsets.UTF_8,
+					StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING));
+			}
+			return writers;
+		} catch (IOException exception) {
+			closeWriters(writers);
+			throw exception;
+		}
+	}
+
+	private void closeWriters(Map<String, BufferedWriter> writers) throws IOException {
+		IOException failure = null;
+		for (BufferedWriter writer : writers.values()) {
+			try { writer.close(); } catch (IOException exception) { if (failure == null) failure = exception; }
+		}
+		if (failure != null) throw failure;
 	}
 
 	private void parse(InputStream input, RowConsumer consumer) {
