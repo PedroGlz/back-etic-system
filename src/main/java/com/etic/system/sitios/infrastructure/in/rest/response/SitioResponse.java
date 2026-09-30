@@ -1,5 +1,8 @@
 package com.etic.system.sitios.infrastructure.in.rest.response;
 
+import com.etic.system.sitios.domain.model.SitioContacto;
+import java.util.List;
+
 public record SitioResponse(
 	String id,
 	String clientId,
@@ -12,12 +15,7 @@ public record SitioResponse(
 	String neighborhood,
 	String state,
 	String municipality,
-	String contact1,
-	String contactRole1,
-	String contact2,
-	String contactRole2,
-	String contact3,
-	String contactRole3,
-	String status
+	String status,
+	List<SitioContacto> contacts
 ) {
 }

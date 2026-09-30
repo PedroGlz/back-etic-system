@@ -67,8 +67,7 @@ public class SitioController {
 		return new SitioResponse(
 			site.id(), site.clientId(), site.clientName(), site.siteGroupId(), site.siteGroupName(),
 			site.name(), site.description(), site.address(), site.neighborhood(), site.state(),
-			site.municipality(), site.contact1(), site.contactRole1(), site.contact2(), site.contactRole2(),
-			site.contact3(), site.contactRole3(), site.status()
+			site.municipality(), site.status(), site.contacts()
 		);
 	}
 

@@ -39,10 +39,34 @@ public class DefaultSiteTransformService implements SiteTransformService {
 			"Id_Sitio", c.text(r,"CustomerSiteID"), "Id_Cliente", c.text(r,"CustomerID"),
 			"Id_Grupo_Sitios", groupByCustomer.get(c.text(r,"CustomerID")), "Sitio", c.text(r,"SiteName"),
 			"Desc_Sitio", c.text(r,"Description"), "Direccion", c.text(r,"Address"), "Estado", c.text(r,"State"),
-			"Municipio", c.text(r,"City"), "Folder", c.text(r,"DefaultSiteFolder"), "Contacto_1", c.text(r,"ContactName"),
-			"Puesto_Contacto_1", c.text(r,"ContactTitle"), "Estatus", inactive(r)?"Inactivo":"Activo",
+			"Municipio", c.text(r,"City"), "Folder", c.text(r,"DefaultSiteFolder"),
+			"Estatus", inactive(r)?"Inactivo":"Activo",
 			"Creado_Por", c.text(r,"CreateUserID"), "Fecha_Creacion", c.value(r,"CreateDate"),
 			"Modificado_Por", c.text(r,"LastUserID"), "Fecha_Mod", c.value(r,"LastModified")));
+		if (c.repository().tableExists("sitio_contactos")) {
+			Map<String,String> existingContactBySite = new HashMap<>();
+			for (Map<String,Object> row : c.repository().query(
+				"SELECT Id_Sitio, Id_Sitio_Contacto FROM sitio_contactos ORDER BY Orden, Id_Sitio_Contacto")) {
+				existingContactBySite.putIfAbsent(
+					String.valueOf(row.get("Id_Sitio")),
+					String.valueOf(row.get("Id_Sitio_Contacto"))
+				);
+			}
+			c.transform("customerSites", "sitio_contactos", "Id_Sitio_Contacto", r -> {
+				String siteId = c.text(r,"CustomerSiteID");
+				String name = c.text(r,"ContactName");
+				String role = c.text(r,"ContactTitle");
+				if (siteId == null || existingContactBySite.containsKey(siteId) || (name == null && role == null)) return null;
+				return c.row(
+					"Id_Sitio_Contacto", deterministic("ETIC:LEGACY:SITE_CONTACT:" + siteId + ":1"),
+					"Id_Sitio", siteId,
+					"Nombre", name,
+					"Puesto", role,
+					"Estatus", inactive(r)?"Inactivo":"Activo",
+					"Orden", 1
+				);
+			});
+		}
 	}
 	private String deterministic(String value) { return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)).toString().toUpperCase(); }
 	private boolean inactive(Map<String,Object> row) { Object value=row.get("DeleteFlag"); return value != null && !"0".equals(value.toString()); }

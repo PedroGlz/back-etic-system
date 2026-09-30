@@ -57,7 +57,8 @@ public class InspectionPackageService {
 		"inspection/problemas.json",
 		"inspection/linea_base.json",
 		"inspection/historial_problemas.json",
-		"context/ubicaciones.json"
+		"context/ubicaciones.json",
+		"context/sitio_contactos.json"
 	);
 	private static final Set<String> DELETE_ENABLED_PATHS = Set.of(
 		"inspection/inspecciones_det.json",
@@ -210,6 +211,15 @@ public class InspectionPackageService {
 				List.of()
 			)));
 		}
+		if (tableExists("sitio_contactos")) {
+			entries.put("context/sitio_contactos.json", jsonBytes(payload(
+				"sitio_contactos",
+				"CONTEXT",
+				Map.of("Id_Sitio", siteId),
+				jdbcTemplate.queryForList("SELECT * FROM sitio_contactos WHERE Id_Sitio = ?", siteId),
+				List.of()
+			)));
+		}
 
 		entries.put("context/sitios.json", jsonBytes(payload("sitios", "CONTEXT", Map.of("Id_Sitio", siteId), List.of(selectedSite), List.of())));
 		entries.put("context/clientes.json", jsonBytes(payload("clientes", "CONTEXT", Map.of("Id_Cliente", clientId), List.of(selectedClient), List.of())));
@@ -238,6 +248,7 @@ public class InspectionPackageService {
 		manifestInspection.put("id_cliente", selectedInspection.get("Id_Cliente"));
 		manifestInspection.put("id_grupo_sitios", selectedInspection.get("Id_Grupo_Sitios"));
 		manifest.put("inspection", manifestInspection);
+		manifest.put("current_inspection_id", inspectionId);
 		manifest.put("files", new ArrayList<>(entries.keySet()));
 		manifest.put("media_included", false);
 		manifest.put("checksum_file", "checksums.json");

@@ -3,6 +3,8 @@ package com.etic.system.sitios.application.service;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
 import com.etic.system.sitios.domain.model.Sitio;
+import com.etic.system.sitios.domain.model.SitioContacto;
+import com.etic.system.sitios.infrastructure.in.rest.request.SitioContactoRequest;
 import com.etic.system.sitios.infrastructure.in.rest.request.SitioRequest;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -28,9 +30,6 @@ public class SitioService {
 		       s.Id_Grupo_Sitios AS siteGroupId, gs.Grupo AS siteGroupName,
 		       s.Sitio AS name, s.Desc_Sitio AS description, s.Direccion AS address,
 		       s.Colonia AS neighborhood, s.Estado AS state, s.Municipio AS municipality,
-		       s.Contacto_1 AS contact1, s.Puesto_Contacto_1 AS contactRole1,
-		       s.Contacto_2 AS contact2, s.Puesto_Contacto_2 AS contactRole2,
-		       s.Contacto_3 AS contact3, s.Puesto_Contacto_3 AS contactRole3,
 		       s.Estatus AS status
 		FROM sitios s
 		LEFT JOIN clientes c ON c.Id_Cliente = s.Id_Cliente
@@ -62,14 +61,13 @@ public class SitioService {
 		jdbc.update("""
 			INSERT INTO sitios (
 				Id_Sitio, Id_Cliente, Id_Grupo_Sitios, Sitio, Desc_Sitio, Direccion, Colonia,
-				Estado, Municipio, Contacto_1, Puesto_Contacto_1, Contacto_2, Puesto_Contacto_2,
-				Contacto_3, Puesto_Contacto_3, Estatus, Creado_Por, Fecha_Creacion
+				Estado, Municipio, Estatus, Creado_Por, Fecha_Creacion
 			) VALUES (
 				:id, :clientId, :siteGroupId, :name, :description, :address, :neighborhood,
-				:state, :municipality, :contact1, :contactRole1, :contact2, :contactRole2,
-				:contact3, :contactRole3, :status, :userId, :now
+				:state, :municipality, :status, :userId, :now
 			)
 			""", params);
+		saveContacts(id, request);
 		return findById(id);
 	}
 
@@ -88,16 +86,11 @@ public class SitioService {
 				Colonia = :neighborhood,
 				Estado = :state,
 				Municipio = :municipality,
-				Contacto_1 = :contact1,
-				Puesto_Contacto_1 = :contactRole1,
-				Contacto_2 = :contact2,
-				Puesto_Contacto_2 = :contactRole2,
-				Contacto_3 = :contact3,
-				Puesto_Contacto_3 = :contactRole3,
 				Modificado_Por = :userId,
 				Fecha_Mod = :now
 			WHERE Id_Sitio = :id
 			""", params);
+		saveContacts(id, request);
 		return findById(id);
 	}
 
@@ -169,18 +162,54 @@ public class SitioService {
 			.addValue("neighborhood", blankToNull(request.neighborhood()))
 			.addValue("state", blankToNull(request.state()))
 			.addValue("municipality", blankToNull(request.municipality()))
-			.addValue("contact1", blankToNull(request.contact1()))
-			.addValue("contactRole1", blankToNull(request.contactRole1()))
-			.addValue("contact2", blankToNull(request.contact2()))
-			.addValue("contactRole2", blankToNull(request.contactRole2()))
-			.addValue("contact3", blankToNull(request.contact3()))
-			.addValue("contactRole3", blankToNull(request.contactRole3()))
 			.addValue("userId", userId)
 			.addValue("now", Timestamp.valueOf(LocalDateTime.now()));
 	}
 
 	private String blankToNull(String value) {
 		return value == null || value.isBlank() ? null : value;
+	}
+
+	private List<SitioContactoRequest> requestContacts(SitioRequest request) {
+		if (request.contacts() == null) {
+			return List.of();
+		}
+		return request.contacts().stream()
+			.filter(contact -> contact != null && (blankToNull(contact.name()) != null || blankToNull(contact.role()) != null))
+			.toList();
+	}
+
+	private void saveContacts(String siteId, SitioRequest request) {
+		List<SitioContactoRequest> contacts = requestContacts(request);
+		jdbc.update("DELETE FROM sitio_contactos WHERE Id_Sitio = :siteId", Map.of("siteId", siteId));
+		for (int index = 0; index < contacts.size(); index++) {
+			SitioContactoRequest contact = contacts.get(index);
+			String id = contact.id() == null || contact.id().isBlank()
+				? UUID.randomUUID().toString().toUpperCase()
+				: contact.id().toUpperCase();
+			MapSqlParameterSource contactParams = new MapSqlParameterSource()
+				.addValue("id", id)
+				.addValue("siteId", siteId)
+				.addValue("name", blankToNull(contact.name()))
+				.addValue("role", blankToNull(contact.role()))
+				.addValue("status", ACTIVE)
+				.addValue("order", index + 1);
+			jdbc.update("""
+				INSERT INTO sitio_contactos (Id_Sitio_Contacto, Id_Sitio, Nombre, Puesto, Estatus, Orden)
+				VALUES (:id, :siteId, :name, :role, :status, :order)
+				""", contactParams);
+		}
+	}
+
+	private List<SitioContacto> findContacts(String siteId) {
+		return jdbc.query("""
+			SELECT Id_Sitio_Contacto, Nombre, Puesto, Estatus, Orden
+			FROM sitio_contactos WHERE Id_Sitio = :siteId AND Estatus = :status
+			ORDER BY Orden, Id_Sitio_Contacto
+			""", Map.of("siteId", siteId, "status", ACTIVE), (rs, rowNum) -> new SitioContacto(
+			rs.getString("Id_Sitio_Contacto"), rs.getString("Nombre"), rs.getString("Puesto"),
+			rs.getString("Estatus"), rs.getInt("Orden")
+		));
 	}
 
 	private Sitio mapRecord(ResultSet rs, int rowNum) throws SQLException {
@@ -196,13 +225,8 @@ public class SitioService {
 			rs.getString("neighborhood"),
 			rs.getString("state"),
 			rs.getString("municipality"),
-			rs.getString("contact1"),
-			rs.getString("contactRole1"),
-			rs.getString("contact2"),
-			rs.getString("contactRole2"),
-			rs.getString("contact3"),
-			rs.getString("contactRole3"),
-			rs.getString("status")
+			rs.getString("status"),
+			findContacts(rs.getString("id"))
 		);
 	}
 }

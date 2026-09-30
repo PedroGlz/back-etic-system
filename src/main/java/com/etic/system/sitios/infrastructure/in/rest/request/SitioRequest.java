@@ -2,6 +2,8 @@ package com.etic.system.sitios.infrastructure.in.rest.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.Valid;
+import java.util.List;
 
 public record SitioRequest(
 	@NotBlank String clientId,
@@ -12,11 +14,6 @@ public record SitioRequest(
 	@Size(max = 200) String neighborhood,
 	@Size(max = 150) String state,
 	@Size(max = 150) String municipality,
-	@Size(max = 200) String contact1,
-	@Size(max = 200) String contactRole1,
-	@Size(max = 200) String contact2,
-	@Size(max = 200) String contactRole2,
-	@Size(max = 200) String contact3,
-	@Size(max = 200) String contactRole3
+	@Valid List<SitioContactoRequest> contacts
 ) {
 }
