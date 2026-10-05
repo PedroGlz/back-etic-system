@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 CREATE TABLE IF NOT EXISTS sitio_contactos (
     Id_Sitio_Contacto VARCHAR(64) NOT NULL,
     Id_Sitio CHAR(36) NOT NULL,

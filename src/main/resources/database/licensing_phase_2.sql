@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 USE license_system;
 
 DROP PROCEDURE IF EXISTS add_licensing_column;

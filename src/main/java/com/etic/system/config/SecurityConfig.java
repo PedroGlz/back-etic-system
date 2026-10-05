@@ -15,31 +15,38 @@ import java.util.List;
 @Configuration
 public class SecurityConfig {
 
-	// Configuración temporal para desarrollo; debe endurecerse antes de UAT o producción.
+	// LEGACY_MOBILE_AUTH: contratos Android; no autenticación web por sesión.
 	@Bean
-	SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-		http
-			.csrf(csrf -> csrf.disable())
-			.cors(Customizer.withDefaults())
-			.authorizeHttpRequests(authorize -> authorize
-				.anyRequest().permitAll());
+	@org.springframework.core.annotation.Order(1)
+	SecurityFilterChain mobileSecurityFilterChain(HttpSecurity http) throws Exception {
+		return http.securityMatcher("/api/auth/login", "/api/auth/me", "/api/auth/logout", "/api/mobile/**")
+			.csrf(c -> c.disable()).sessionManagement(s -> s.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.IF_REQUIRED))
+			.authorizeHttpRequests(a -> a.anyRequest().permitAll())
+			.addFilterBefore(new org.springframework.web.filter.OncePerRequestFilter() {
+				@Override protected void doFilterInternal(jakarta.servlet.http.HttpServletRequest req, jakarta.servlet.http.HttpServletResponse res, jakarta.servlet.FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
+					if (req.getHeader("Origin") != null) { res.setStatus(403); res.setContentType("application/json;charset=UTF-8"); res.getWriter().write("{\"status\":403,\"message\":\"LEGACY_MOBILE_AUTH no disponible para navegadores\"}"); return; }
+					chain.doFilter(req,res);
+				}
+			}, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class).build();
+	}
 
-		return http.build();
+	@Bean
+	@org.springframework.core.annotation.Order(2)
+	SecurityFilterChain securityFilterChain(HttpSecurity http,
+			@Value("${LICENSE_CONTROL_JWT_SECRET:}") String secret) throws Exception {
+		return http.csrf(c -> c.disable()).cors(Customizer.withDefaults())
+			.sessionManagement(s -> s.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+			.exceptionHandling(e -> e.authenticationEntryPoint((req,res,ex) -> {res.setStatus(401);res.setContentType("application/json;charset=UTF-8");res.getWriter().write("{\"status\":401,\"message\":\"Se requiere JWT ETIC_ONLINE válido\"}");})
+				.accessDeniedHandler((req,res,ex) -> res.setStatus(403)))
+			.authorizeHttpRequests(a -> a.dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll().requestMatchers("/actuator/health").permitAll().requestMatchers("/api/**").authenticated().anyRequest().denyAll())
+			.addFilterBefore(new com.etic.system.auth.security.WebJwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class).build();
 	}
 
 	@Bean
 	CorsConfigurationSource corsConfigurationSource(
-		@Value("${app.cors.portal-origin}") String portalOrigin) {
+		@Value("${ETIC_FRONTEND_ORIGINS:http://localhost:4200,http://localhost:4400}") String origins) {
 		CorsConfiguration configuration = new CorsConfiguration();
-		configuration.setAllowedOrigins(List.of(
-			"https://etic-system.online",
-			"https://www.etic-system.online",
-			portalOrigin,
-			"http://localhost:4200",
-			"http://localhost:4300",
-			"http://127.0.0.1:4300",
-			"http://localhost:3000"
-		));
+		configuration.setAllowedOrigins(java.util.Arrays.stream(origins.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList());
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"));
 		configuration.setAllowCredentials(true);

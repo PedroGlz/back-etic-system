@@ -2,13 +2,12 @@ package com.etic.system.catalogos.grupos;
 
 import com.etic.system.catalogos.shared.domain.model.CatalogDefinition;
 import com.etic.system.catalogos.shared.domain.model.CatalogModule;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 import static com.etic.system.catalogos.shared.domain.model.CatalogDefinitions.field;
 
-@Component
+// Fase 2B: no exponer la administración de grupos en el catálogo genérico.
 public class GruposCatalogModule implements CatalogModule {
 
 	@Override

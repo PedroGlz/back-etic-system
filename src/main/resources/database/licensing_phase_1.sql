@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS license_system CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 USE license_system;
 
@@ -72,7 +75,7 @@ CREATE TABLE IF NOT EXISTS application_versions (
   Id_Version CHAR(38) NOT NULL,
   Id_Application CHAR(38) NOT NULL,
   Version_Name VARCHAR(80) NOT NULL,
-  Version_Code BIGINT NOT NULL,
+  Version_Code BIGINT NULL,
   Original_File_Name VARCHAR(255) NOT NULL,
   Storage_File_Name VARCHAR(255) NOT NULL,
   Sha256 CHAR(64) NOT NULL,

@@ -30,12 +30,8 @@ public class DistributionService {
 	}
 
 	public AuthenticatedUser activeUser(HttpSession session) {
-		Object value = session.getAttribute("authenticatedUser");
-		if (!(value instanceof AuthenticatedUser user))
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Se requiere sesión");
-		if (!activeUserExists(user.id()))
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Usuario inactivo o inexistente");
-		return user;
+		var user=com.etic.system.auth.security.WebIdentity.current();
+		return new AuthenticatedUser(user.id(),user.username(),user.firstName(),user.email(),null,null,null,null);
 	}
 
 	private boolean activeUserExists(String id) {
@@ -49,10 +45,11 @@ public class DistributionService {
 		return licensing.query(versionSql() + " ORDER BY v.Created_At DESC", Map.of(), (r, n) -> version(r));
 	}
 
-	public Version upload(String applicationId, String versionName, long versionCode,
+	public Version upload(String applicationId, String versionName, Long versionCode,
 		String minimumAndroid, String releaseNotes, boolean mandatory, boolean published,
 		MultipartFile file, String actorId) {
-		if (versionName == null || versionName.isBlank() || versionName.length() > 80 || versionCode <= 0)
+		if (versionName == null || versionName.isBlank() || versionName.length() > 80 ||
+			(versionCode != null && versionCode <= 0))
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Versión inválida");
 		if (minimumAndroid != null && minimumAndroid.length() > 40)
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Android mínimo inválido");
@@ -61,13 +58,17 @@ public class DistributionService {
 		String code = licensing.query("SELECT Code FROM licensed_applications WHERE Id_Application=:id",
 			Map.of("id", applicationId), (r, n) -> r.getString(1)).stream().findFirst()
 			.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Aplicación no encontrada"));
-		Integer exists = licensing.queryForObject(
-			"SELECT COUNT(*) FROM application_versions WHERE Id_Application=:app AND Version_Code=:code",
-			Map.of("app", applicationId, "code", versionCode), Integer.class);
-		if (exists != null && exists > 0)
-			throw new ResponseStatusException(HttpStatus.CONFLICT, "VersionCode duplicado");
-		ApkStorage.StoredApk stored = storage.store(code, versionCode, file);
 		String id = UUID.randomUUID().toString().toUpperCase();
+		if (versionCode != null) {
+			Integer exists = licensing.queryForObject(
+				"SELECT COUNT(*) FROM application_versions WHERE Id_Application=:app AND Version_Code=:code",
+				Map.of("app", applicationId, "code", versionCode), Integer.class);
+			if (exists != null && exists > 0)
+				throw new ResponseStatusException(HttpStatus.CONFLICT, "VersionCode duplicado");
+		}
+		ApkStorage.StoredApk stored = versionCode == null
+			? storage.store(code, id, file)
+			: storage.store(code, versionCode.longValue(), file);
 		try {
 			licensing.update("INSERT INTO application_versions (Id_Version,Id_Application,Version_Name,Version_Code,Original_File_Name,Storage_File_Name,Sha256,File_Size,Minimum_Android,Release_Notes,Mandatory,Published,Created_At,Created_By) VALUES (:id,:app,:name,:code,:original,:storage,:sha,:size,:minimum,:notes,:mandatory,:published,:now,:actor)",
 				new MapSqlParameterSource().addValue("id", id).addValue("app", applicationId)
@@ -82,6 +83,13 @@ public class DistributionService {
 			throw e;
 		}
 		return adminVersion(id);
+	}
+
+	public Version upload(String applicationId, String versionName, long versionCode,
+		String minimumAndroid, String releaseNotes, boolean mandatory, boolean published,
+		MultipartFile file, String actorId) {
+		return upload(applicationId, versionName, Long.valueOf(versionCode), minimumAndroid,
+			releaseNotes, mandatory, published, file, actorId);
 	}
 
 	public Version publish(String id, boolean published, String actorId) {
@@ -115,16 +123,25 @@ public class DistributionService {
 
 	private Version version(java.sql.ResultSet r) throws java.sql.SQLException {
 		return new Version(r.getString("Id_Version"), r.getString("Id_Application"),
-			r.getString("Application_Name"), r.getString("Version_Name"), r.getLong("Version_Code"),
+			r.getString("Application_Name"), r.getString("Version_Name"), r.getObject("Version_Code", Long.class),
 			r.getString("Original_File_Name"), r.getString("Sha256"), r.getLong("File_Size"),
 			r.getString("Minimum_Android"), r.getString("Release_Notes"),
 			r.getBoolean("Mandatory"), r.getBoolean("Published"), r.getTimestamp("Created_At").toLocalDateTime());
 	}
 
 	public record Version(String id, String applicationId, String applicationName,
-		String versionName, long versionCode, String originalFileName, String sha256,
+		String versionName, Long versionCode, String originalFileName, String sha256,
 		long fileSize, String minimumAndroid, String releaseNotes, boolean mandatory,
-		boolean published, LocalDateTime createdAt) {}
+		boolean published, LocalDateTime createdAt) {
+		public Version(String id, String applicationId, String applicationName,
+			String versionName, long versionCode, String originalFileName, String sha256,
+			long fileSize, String minimumAndroid, String releaseNotes, boolean mandatory,
+			boolean published, LocalDateTime createdAt) {
+			this(id, applicationId, applicationName, versionName, Long.valueOf(versionCode),
+				originalFileName, sha256, fileSize, minimumAndroid, releaseNotes, mandatory,
+				published, createdAt);
+		}
+	}
 
 	public List<Access> adminAccess() {
 		return licensing.query(accessSql() + " ORDER BY x.Created_At DESC", Map.of(),
@@ -218,13 +235,13 @@ public class DistributionService {
 	public List<Version> portalVersions(AuthenticatedUser user, String applicationId) {
 		portalApp(user, applicationId);
 		return licensing.query(versionSql() +
-			" WHERE v.Id_Application=:id AND v.Published=TRUE ORDER BY v.Version_Code DESC",
+			" WHERE v.Id_Application=:id AND v.Published=TRUE ORDER BY (v.Version_Code IS NULL) DESC, CASE WHEN v.Version_Code IS NULL THEN v.Created_At END DESC, v.Version_Code DESC",
 			Map.of("id", applicationId), (r, n) -> version(r));
 	}
 
 	public Version latestVersion(String applicationId) {
 		return licensing.query(versionSql() +
-			" WHERE v.Id_Application=:id AND v.Published=TRUE ORDER BY v.Version_Code DESC LIMIT 1",
+			" WHERE v.Id_Application=:id AND v.Published=TRUE ORDER BY (v.Version_Code IS NULL) DESC, CASE WHEN v.Version_Code IS NULL THEN v.Created_At END DESC, v.Version_Code DESC LIMIT 1",
 			Map.of("id", applicationId), (r, n) -> version(r)).stream().findFirst().orElse(null);
 	}
 

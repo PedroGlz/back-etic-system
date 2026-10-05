@@ -19,11 +19,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-@RestController
+// Fase 2B: administración exclusiva de License Control; no registrar endpoints.
 @RequestMapping("/api/usuarios")
 public class UsuarioController {
 

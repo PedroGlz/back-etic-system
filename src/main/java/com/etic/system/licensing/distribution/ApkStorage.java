@@ -24,17 +24,17 @@ public class ApkStorage {
 		this.maxBytes = maxBytes;
 	}
 
-	public StoredApk store(String code, long versionCode, MultipartFile file) {
+	public StoredApk store(String code, String versionKey, MultipartFile file) {
 		String original = file.getOriginalFilename();
 		if (file.isEmpty() || file.getSize() > maxBytes || original == null ||
 			!original.toLowerCase(java.util.Locale.ROOT).endsWith(".apk") ||
 			original.contains("/") || original.indexOf(92) >= 0 || original.contains("..")) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Archivo APK inválido o demasiado grande");
 		}
-		if (!code.matches("[A-Za-z0-9_-]+") || versionCode <= 0) {
+		if (!code.matches("[A-Za-z0-9_-]+") || !versionKey.matches("[A-Za-z0-9_-]+")) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ruta de aplicación inválida");
 		}
-		Path target = root.resolve(code).resolve(Long.toString(versionCode)).resolve("application.apk").normalize();
+		Path target = root.resolve(code).resolve(versionKey).resolve("application.apk").normalize();
 		if (!target.startsWith(root)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
 		Path temp = null;
 		try {
@@ -69,6 +69,12 @@ public class ApkStorage {
 		} finally {
 			if (temp != null) try { Files.deleteIfExists(temp); } catch (IOException ignored) { }
 		}
+	}
+
+	public StoredApk store(String code, long versionCode, MultipartFile file) {
+		if (versionCode <= 0)
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ruta de aplicación inválida");
+		return store(code, Long.toString(versionCode), file);
 	}
 
 	public Path resolve(String relative) {

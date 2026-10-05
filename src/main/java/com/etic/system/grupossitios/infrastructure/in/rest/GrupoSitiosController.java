@@ -68,7 +68,6 @@ public class GrupoSitiosController {
 	}
 
 	private String userId(HttpSession session) {
-		Object userId = session.getAttribute("userId");
-		return userId == null ? null : userId.toString();
+		return com.etic.system.auth.security.WebIdentity.current().id();
 	}
 }

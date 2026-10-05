@@ -14,10 +14,10 @@ import org.springframework.web.cors.DefaultCorsProcessor;
 class SecurityConfigCorsTest {
 
     @Test
-    void allowsCredentialedLocalPortalOriginsWithoutWildcard() throws Exception {
+    void allowsConfiguredWebOriginWithoutWildcard() throws Exception {
         CorsConfigurationSource source = new SecurityConfig()
-            .corsConfigurationSource("https://apps.etic-system.online");
-        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/auth/login");
+            .corsConfigurationSource("http://localhost:4200");
+        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/catalogos");
         CorsConfiguration cors = source.getCorsConfiguration(request);
 
         assertTrue(cors.getAllowCredentials());
@@ -25,17 +25,13 @@ class SecurityConfigCorsTest {
         assertTrue(cors.getAllowedMethods().contains("OPTIONS"));
         assertTrue(cors.getAllowedHeaders().contains("Content-Type"));
         assertEquals("http://localhost:4200", cors.checkOrigin("http://localhost:4200"));
-        assertEquals("http://localhost:4300", cors.checkOrigin("http://localhost:4300"));
-        assertEquals("http://127.0.0.1:4300", cors.checkOrigin("http://127.0.0.1:4300"));
-        assertEquals("https://apps.etic-system.online", cors.checkOrigin("https://apps.etic-system.online"));
         assertFalse(cors.getAllowedOrigins().contains("*"));
 
         assertPreflightAllowed(cors, "http://localhost:4200");
-        assertPreflightAllowed(cors, "http://localhost:4300");
     }
 
     private void assertPreflightAllowed(CorsConfiguration cors, String origin) throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/auth/login");
+        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/catalogos");
         request.addHeader("Origin", origin);
         request.addHeader("Access-Control-Request-Method", "POST");
         request.addHeader("Access-Control-Request-Headers", "content-type");

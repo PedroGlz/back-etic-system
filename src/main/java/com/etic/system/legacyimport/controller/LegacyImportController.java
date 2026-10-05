@@ -76,10 +76,9 @@ public class LegacyImportController {
 	}
 
 	private AuthenticatedUser requireAdministrator(HttpSession session) {
-		Object value=session.getAttribute("authenticatedUser");
-		if(!(value instanceof AuthenticatedUser user))throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Se requiere una sesión activa");
-		if(user.groupName()==null||!user.groupName().equalsIgnoreCase("Administradores"))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Se requieren permisos de administrador");
-		return user;
+		var user=com.etic.system.auth.security.WebIdentity.current();
+		if(!user.systemAdmin())throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Se requieren permisos de administrador de ETIC_ONLINE");
+		return new AuthenticatedUser(user.id(),user.username(),user.firstName(),user.email(),null,null,null,null);
 	}
 
 	public record UploadResponse(String id, LegacyImportStatus status) {

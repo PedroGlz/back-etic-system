@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 ALTER TABLE ubicaciones
   ADD COLUMN Id_Categoria_Equipo CHAR(38)
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL AFTER Es_Equipo,

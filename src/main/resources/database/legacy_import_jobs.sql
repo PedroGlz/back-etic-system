@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 CREATE TABLE IF NOT EXISTS legacy_import_jobs (
   id CHAR(36) NOT NULL PRIMARY KEY,
   filename VARCHAR(255) NOT NULL,

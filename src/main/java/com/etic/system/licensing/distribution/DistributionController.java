@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-@RestController
+// Fase 2B: sin endpoints administrativos; apk() permanece para PortalController.
 @RequestMapping("/api/licensing")
 public class DistributionController {
 	private final DistributionService service;
@@ -40,7 +40,7 @@ public class DistributionController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public DistributionService.Version upload(
 		@RequestParam String applicationId, @RequestParam String versionName,
-		@RequestParam long versionCode, @RequestParam(required = false) String minimumAndroid,
+		@RequestParam(required = false) Long versionCode, @RequestParam(required = false) String minimumAndroid,
 		@RequestParam(required = false) String releaseNotes,
 		@RequestParam(defaultValue = "false") boolean mandatory,
 		@RequestParam(defaultValue = "false") boolean published,

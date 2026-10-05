@@ -11,7 +11,7 @@ import jakarta.validation.constraints.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
-@RestController
+// Fase 2B: administración exclusiva de License Control; no registrar endpoints.
 @RequestMapping("/api/licensing/devices")
 public class LicensingDeviceAdminController {
 	private final DeviceSecurityService service;

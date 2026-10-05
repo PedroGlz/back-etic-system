@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+// LEGACY_MOBILE_AUTH: login, me y logout por HttpSession; exclusivo de Android.
 @RestController
 @RequestMapping("/api/auth")
 public class AuthenticationController {
@@ -25,6 +26,7 @@ public class AuthenticationController {
 		this.authenticationService = authenticationService;
 	}
 
+	// LEGACY_MOBILE_AUTH temporal: compatibilidad Android; no login web.
 	@PostMapping("/login")
 	public AuthenticatedUser login(@Valid @RequestBody LoginRequest request, HttpSession session) {
 		AuthenticatedUser user = authenticationService.authenticate(request.username(), request.password())

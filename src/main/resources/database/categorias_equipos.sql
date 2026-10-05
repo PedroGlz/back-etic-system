@@ -1,3 +1,6 @@
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+SET CHARACTER SET utf8mb4;
+
 CREATE TABLE IF NOT EXISTS categorias_equipos (
   id_categoria_equipo CHAR(38) NOT NULL,
   nombre_categoria TEXT NOT NULL,

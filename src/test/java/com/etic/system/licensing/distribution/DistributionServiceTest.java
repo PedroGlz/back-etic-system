@@ -104,4 +104,23 @@ class DistributionServiceTest {
 		verify(licensing).update(startsWith("INSERT INTO application_versions"), any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class));
 		verifyNoInteractions(etic);
 	}
+
+	@Test void uploadVersionAcceptsMissingVersionCode() {
+		var file = new MockMultipartFile("file", "app.apk", "application/octet-stream", "apk".getBytes());
+		doReturn(List.of("APP")).when(licensing).query(startsWith("SELECT Code FROM licensed_applications"),
+			any(Map.class), any(org.springframework.jdbc.core.RowMapper.class));
+		when(storage.store(eq("APP"), anyString(), eq(file)))
+			.thenReturn(new ApkStorage.StoredApk("APP/V1/application.apk", "app.apk", "abc", 3));
+		var version = new DistributionService.Version("V1", "A1", "App", "1.0", null, "app.apk",
+			"abc", 3, null, null, false, false, LocalDateTime.now());
+		doReturn(List.of(version)).when(licensing).query(contains("WHERE v.Id_Version=:id"),
+			any(Map.class), any(org.springframework.jdbc.core.RowMapper.class));
+
+		assertEquals(version, service.upload("A1", "1.0", (Long) null,
+			null, null, false, false, file, "ADMIN"));
+		verify(licensing, never()).queryForObject(contains("FROM application_versions"),
+			any(Map.class), eq(Integer.class));
+		verify(licensing).update(startsWith("INSERT INTO application_versions"),
+			any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class));
+	}
 }

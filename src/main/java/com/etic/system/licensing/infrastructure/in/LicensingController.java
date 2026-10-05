@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.util.List;
 
-@RestController
+// Fase 2B: administración exclusiva de License Control; no registrar endpoints.
 @RequestMapping("/api/licensing")
 public class LicensingController {
 	private final LicensingService service;
