@@ -77,7 +77,9 @@ public class LegacyImportController {
 
 	private AuthenticatedUser requireAdministrator(HttpSession session) {
 		var user=com.etic.system.auth.security.WebIdentity.current();
-		if(!user.systemAdmin())throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Se requieren permisos de administrador de ETIC_ONLINE");
+		if(user == null || user.id() == null || user.id().isBlank()) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Se requiere una sesión válida");
+		}
 		return new AuthenticatedUser(user.id(),user.username(),user.firstName(),user.email(),null,null,null,null);
 	}
 
