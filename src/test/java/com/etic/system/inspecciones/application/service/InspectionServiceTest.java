@@ -125,6 +125,11 @@ class InspectionServiceTest {
 		}
 
 		@Override
+		public boolean isValidSiteHierarchy(String clientId, String siteGroupId, String siteId) {
+			return true;
+		}
+
+		@Override
 		public Integer findMaxInspectionNumber() {
 			return null;
 		}
@@ -155,6 +160,10 @@ class InspectionServiceTest {
 
 		@Override
 		public void updateInspection(String inspectionId, UpsertInspectionCommand command, String statusId, int daysCount, String userId) {
+		}
+
+		@Override
+		public void updateInspectionRelationsSite(String inspectionId, String currentSiteId, String newSiteId) {
 		}
 
 		@Override

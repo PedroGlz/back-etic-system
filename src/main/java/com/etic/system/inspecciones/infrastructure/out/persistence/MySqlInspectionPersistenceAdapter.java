@@ -6,6 +6,7 @@ import com.etic.system.inspecciones.domain.model.InspectionLocation;
 import com.etic.system.inspecciones.domain.model.InspectionSession;
 import com.etic.system.inspecciones.domain.model.InspectionStatusIds;
 import com.etic.system.inspecciones.domain.model.InspectionSummary;
+import com.etic.system.shared.domain.exception.BusinessValidationException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -88,6 +89,22 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 			.addValue("excludedInspectionId", excludedInspectionId);
 		Integer count = jdbc.queryForObject(sql, params, Integer.class);
 		return count != null && count > 0;
+	}
+
+	@Override
+	public boolean isValidSiteHierarchy(String clientId, String siteGroupId, String siteId) {
+		Integer count = jdbc.queryForObject("""
+			SELECT COUNT(*)
+			FROM sitios s
+			JOIN grupos_sitios gs ON gs.Id_Grupo_Sitios = s.Id_Grupo_Sitios
+			WHERE s.Id_Sitio = :siteId
+			  AND s.Id_Cliente = :clientId
+			  AND s.Id_Grupo_Sitios = :siteGroupId
+			  AND gs.Id_Cliente = :clientId
+			  AND s.Estatus = :status
+			  AND gs.Estatus = :status
+			""", Map.of("clientId", clientId, "siteGroupId", siteGroupId, "siteId", siteId, "status", ACTIVE), Integer.class);
+		return count != null && count == 1;
 	}
 
 	@Override
@@ -212,6 +229,46 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 			    Fecha_Mod = :now
 			WHERE Id_Inspeccion = :inspectionId
 			""", params);
+	}
+
+	@Override
+	public void updateInspectionRelationsSite(String inspectionId, String currentSiteId, String newSiteId) {
+		MapSqlParameterSource params = new MapSqlParameterSource()
+			.addValue("inspectionId", inspectionId)
+			.addValue("currentSiteId", currentSiteId)
+			.addValue("newSiteId", newSiteId);
+		Integer sharedLocations = jdbc.queryForObject("""
+			SELECT COUNT(*)
+			FROM ubicaciones u
+			WHERE u.Id_Sitio = :currentSiteId
+			  AND (
+				EXISTS (SELECT 1 FROM inspecciones_det d WHERE d.Id_Inspeccion = :inspectionId AND d.Id_Ubicacion = u.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM problemas p WHERE p.Id_Inspeccion = :inspectionId AND p.Id_Ubicacion = u.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM linea_base l WHERE l.Id_Inspeccion = :inspectionId AND l.Id_Ubicacion = u.Id_Ubicacion)
+			  )
+			  AND (
+				EXISTS (SELECT 1 FROM inspecciones_det d WHERE d.Id_Inspeccion <> :inspectionId AND d.Id_Ubicacion = u.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM problemas p WHERE p.Id_Inspeccion <> :inspectionId AND p.Id_Ubicacion = u.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM linea_base l WHERE l.Id_Inspeccion <> :inspectionId AND l.Id_Ubicacion = u.Id_Ubicacion)
+			  )
+			""", params, Integer.class);
+		if (sharedLocations != null && sharedLocations > 0) {
+			throw new BusinessValidationException("No es posible cambiar el sitio porque la inspección comparte ubicaciones con otras inspecciones");
+		}
+		jdbc.update("""
+			UPDATE ubicaciones
+			SET Id_Sitio = :newSiteId
+			WHERE Id_Sitio = :currentSiteId
+			  AND (
+				EXISTS (SELECT 1 FROM inspecciones_det d WHERE d.Id_Inspeccion = :inspectionId AND d.Id_Ubicacion = ubicaciones.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM problemas p WHERE p.Id_Inspeccion = :inspectionId AND p.Id_Ubicacion = ubicaciones.Id_Ubicacion)
+				OR EXISTS (SELECT 1 FROM linea_base l WHERE l.Id_Inspeccion = :inspectionId AND l.Id_Ubicacion = ubicaciones.Id_Ubicacion)
+			  )
+			""", params);
+		jdbc.update("UPDATE inspecciones_det SET Id_Sitio = :newSiteId WHERE Id_Inspeccion = :inspectionId", params);
+		jdbc.update("UPDATE problemas SET Id_Sitio = :newSiteId WHERE Id_Inspeccion = :inspectionId", params);
+		jdbc.update("UPDATE linea_base SET Id_Sitio = :newSiteId WHERE Id_Inspeccion = :inspectionId", params);
+		jdbc.update("UPDATE historial_problemas SET Id_Sitio = :newSiteId WHERE Id_Inspeccion = :inspectionId", params);
 	}
 
 	@Override

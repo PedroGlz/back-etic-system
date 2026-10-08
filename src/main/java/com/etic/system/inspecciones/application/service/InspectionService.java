@@ -96,8 +96,8 @@ public class InspectionService {
 			throw new BusinessValidationException("Solo la inspección más reciente y no cerrada puede editarse");
 		}
 
-		if (!current.siteId().equals(command.siteId())) {
-			throw new BusinessValidationException("El sitio no puede cambiarse después de crear la inspección");
+		if (!persistencePort.isValidSiteHierarchy(command.clientId(), command.siteGroupId(), command.siteId())) {
+			throw new BusinessValidationException("El cliente, grupo de sitios y sitio seleccionados no tienen una relación válida");
 		}
 
 		String statusId = normalizeStatus(command.statusId());
@@ -108,6 +108,9 @@ public class InspectionService {
 
 		int daysCount = calculateDays(command.startDate(), command.endDate());
 		persistencePort.updateInspection(inspectionId, command, statusId, daysCount, userId);
+		if (!current.siteId().equals(command.siteId())) {
+			persistencePort.updateInspectionRelationsSite(inspectionId, current.siteId(), command.siteId());
+		}
 		return findById(inspectionId);
 	}
 

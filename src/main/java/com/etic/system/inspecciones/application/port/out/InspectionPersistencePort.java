@@ -18,6 +18,8 @@ public interface InspectionPersistencePort {
 
 	boolean hasOpenInspectionOnSite(String siteId, String excludedInspectionId);
 
+	boolean isValidSiteHierarchy(String clientId, String siteGroupId, String siteId);
+
 	Integer findMaxInspectionNumber();
 
 	List<InspectionLocation> findActiveLocationsBySite(String siteId);
@@ -41,6 +43,8 @@ public interface InspectionPersistencePort {
 		int daysCount,
 		String userId
 	);
+
+	void updateInspectionRelationsSite(String inspectionId, String currentSiteId, String newSiteId);
 
 	void updateInspectionStatus(String inspectionId, String statusId, java.time.LocalDateTime endDate, int daysCount, String userId);
 
