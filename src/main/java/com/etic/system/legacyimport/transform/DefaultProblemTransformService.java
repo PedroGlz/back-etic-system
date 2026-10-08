@@ -15,6 +15,15 @@ public class DefaultProblemTransformService implements ProblemTransformService {
 		Map<String,Map<String,Object>> equipment=c.index("equipment","EquipmentID");
 		Map<String,Map<String,Object>> groups=c.index("equipmentGroups","EquipmentGroupID");
 		Map<String,Map<String,Object>> faults=c.index("faults","FaultID");
+		Map<String,LatestAppearance> latestChronicAppearances=new HashMap<>();
+		appearances.forEach((appearanceId,appearance)->{
+			if(inactive(appearance))return;
+			String problemId=c.text(appearance,"ProblemID");Map<String,Object> problem=problems.get(problemId);
+			if(problem==null||!truth(problem.get("IsChronic")))return;
+			Map<String,Object> inspection=inspections.get(c.text(appearance,"InspectionID"));if(inspection==null)return;
+			LatestAppearance candidate=new LatestAppearance(appearanceId,number(inspection.get("InspectionNo")),c.date(inspection,"ScheduledStart"),c.text(appearance,"InspectionID"));
+			latestChronicAppearances.merge(problemId,candidate,(current,next)->latest(current,next));
+		});
 		Map<String,PhotoSelection> photos=new HashMap<>();
 		c.forEach("problemPhotos",r->photos.merge(c.text(r,"ProblemInspectionID"),new PhotoSelection(r,1),(current,ignored)->
 			new PhotoSelection(photoKey(c,r).compareTo(photoKey(c,current.photo()))<0?r:current.photo(),current.count()+1)));
@@ -40,6 +49,8 @@ public class DefaultProblemTransformService implements ProblemTransformService {
 			Map<String,Object> equipmentRow=equipment.get(equipmentId), fault=faults.get(faultId);
 			Map<String,Object> group=equipmentRow==null?null:groups.get(c.text(equipmentRow,"EquipmentGroupID"));
 			String siteId=c.text(inspection,"CustomerSiteID"), closedNo=c.text(problem,"ClosedOnInspectionNo");
+			LatestAppearance latest=latestChronicAppearances.get(problemId);
+			String status=truth(problem.get("IsChronic"))&&!inactive(appearance)&&latest!=null&&!appearanceId.equals(latest.appearanceId())?"Cerrado":problemStatus(problem);
 			return c.row("Id_Problema",pieId,"Id_Tipo_Inspeccion",c.text(problem,"InspectionTypeID"),"Numero_Problema",c.value(appearance,"ProblemNo"),
 				"Id_Sitio",siteId,"Id_Inspeccion",inspectionId,"Id_Inspeccion_Det",c.text(appearance,"InspectionDetailID"),"Id_Ubicacion",c.text(problem,"LocationID"),
 				"Problem_Phase",c.text(pie,"ProblemPhaseID"),"Reference_Phase",c.text(pie,"ReferencePhaseID"),"Additional_Info",c.text(pie,"SecondReferencePhaseID"),
@@ -50,7 +61,7 @@ public class DefaultProblemTransformService implements ProblemTransformService {
 				"Photo_File",photo==null?null:c.text(photo,"PhotoFileName"),"Photo_File_Date",photo==null?null:c.value(photo,"PhotoDate"),
 				"Id_Fabricante",c.text(problem,"ManufacturerID"),"Rated_Load",c.value(problem,"PI4"),"Circuit_Voltage",c.value(problem,"PI5"),
 				"Id_Falla",faultId,"Id_Equipo",equipmentId,"Component_Comment",c.text(problem,"ComponentComment"),
-				"Estatus_Problema",problemStatus(problem),"Aumento_Temperatura",problemTemp==null||referenceTemp==null?null:problemTemp-referenceTemp,
+				"Estatus_Problema",status,"Aumento_Temperatura",problemTemp==null||referenceTemp==null?null:problemTemp-referenceTemp,
 				"Id_Severidad",c.text(pie,"ProblemSeverityID"),"Estatus",inactive(appearance)?"Inactivo":"Activo","Ruta",locationPath(c,c.text(problem,"LocationID")),
 				"hazard_Type",limited(c.text(problem,"FaultType"),38),"hazard_Classification",limited(group==null?null:c.text(group,"Name"),38),
 				"hazard_Group",limited(equipmentRow==null?null:c.text(equipmentRow,"Name"),38),"hazard_Issue",limited(fault==null?null:c.text(fault,"Fault"),38),
@@ -62,6 +73,14 @@ public class DefaultProblemTransformService implements ProblemTransformService {
 	private Double temperature(LegacyEtlContext c,Map<String,Object> row,String field,String unit,String inspectionId){Object value=row.get(field);if(value==null||value.toString().isBlank())return null;try{return TemperatureConverter.toCelsius(value,unit);}catch(TemperatureConverter.UnknownTemperatureUnitException e){c.report().unknownTemperatureUnits(1);c.report().error("problemas");throw new IllegalArgumentException(e.getMessage()+" en "+inspectionId);}}
 	@SuppressWarnings("unchecked") private String locationPath(LegacyEtlContext c,String id){Object paths=c.shared().get("locationPaths");if(paths instanceof Map<?,?> map&&map.get(id) instanceof LocationHierarchyBuilder.LocationPath path)return path.path();return null;}
 	private String problemStatus(Map<String,Object> row){Object value=row.get("ProblemStatus");return value==null?null:truth(value)?"Abierto":"Cerrado";}
+	private LatestAppearance latest(LatestAppearance first,LatestAppearance second){
+		int comparison=java.util.Comparator.nullsFirst(Long::compareTo).compare(first.inspectionNumber(),second.inspectionNumber());
+		if(comparison==0)comparison=java.util.Comparator.nullsFirst(java.time.LocalDateTime::compareTo).compare(first.inspectionDate(),second.inspectionDate());
+		if(comparison==0)comparison=safe(first.inspectionId()).compareTo(safe(second.inspectionId()));
+		if(comparison==0)comparison=first.appearanceId().compareTo(second.appearanceId());
+		return comparison>=0?first:second;
+	}
+	private Long number(Object value){return value instanceof Number number?number.longValue():value==null?null:Long.valueOf(value.toString());}
 	private String booleanText(Object value){return value==null?null:truth(value)?"SI":"NO";}
 	private boolean truth(Object v){return v instanceof Boolean b?b:v!=null&&("1".equals(v.toString())||"true".equalsIgnoreCase(v.toString()));}
 	private boolean inactive(Map<String,Object> row){Object value=row.get("DeleteFlag");return value!=null&&!"0".equals(value.toString());}
@@ -69,4 +88,5 @@ public class DefaultProblemTransformService implements ProblemTransformService {
 	private String photoKey(LegacyEtlContext c,Map<String,Object> row){return safe(c.text(row,"CreateDate"))+safe(c.text(row,"ProblemPhotoID"));}
 	private String key(String a,String b){return safe(a)+"\u0000"+safe(b);}private String safe(String v){return v==null?"":v;}
 	private record PhotoSelection(Map<String,Object> photo,int count){}
+	private record LatestAppearance(String appearanceId,Long inspectionNumber,java.time.LocalDateTime inspectionDate,String inspectionId){}
 }
