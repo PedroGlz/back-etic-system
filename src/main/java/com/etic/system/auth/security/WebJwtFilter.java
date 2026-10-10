@@ -49,7 +49,6 @@ public class WebJwtFilter extends OncePerRequestFilter {
         } catch (Exception e) { reject(res, 401, "Token inválido o expirado"); return; }
         if (!"ETIC_ONLINE".equals(claims.path("system").asText())) { reject(res, 403, "Token para otro sistema"); return; }
         List<String> roles = strings(claims.path("roles")), permissions = strings(claims.path("permissions"));
-        if (roles.isEmpty()) { reject(res, 403, "Se requiere un rol de ETIC_ONLINE"); return; }
         var user = new WebIdentity(claims.path("sub").asText(), claims.path("username").asText(),
                 text(claims,"firstName"), text(claims,"lastName"), text(claims,"email"), roles, permissions, claims.path("systemAdmin").asBoolean(false));
         List<SimpleGrantedAuthority> authorities = new ArrayList<>();
@@ -61,6 +60,7 @@ public class WebJwtFilter extends OncePerRequestFilter {
         chain.doFilter(req, res);
     }
     private List<String> strings(JsonNode node) {
+		if (node.isMissingNode() || node.isNull()) return List.of();
         if (!node.isArray()) throw new IllegalArgumentException();
         List<String> result = new ArrayList<>();
         node.forEach(n -> { if (!n.isTextual() || n.asText().isBlank()) throw new IllegalArgumentException(); result.add(n.asText()); });
