@@ -16,6 +16,9 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -83,6 +86,8 @@ public class InspectionPackageService {
 	private static final Set<String> PROBLEM_REPORT_INTERNAL_IDS = Set.of("Id_Problema", "Id_Inspeccion_Det");
 
 	private final JdbcTemplate jdbcTemplate;
+	private final NamedParameterJdbcTemplate licensingJdbc;
+	private final String androidSystemCode;
 	private final JdbcClient jdbcClient;
 	private final ObjectMapper objectMapper;
 	private final ReportTemplateService reportTemplateService;
@@ -90,12 +95,16 @@ public class InspectionPackageService {
 
 	public InspectionPackageService(
 		JdbcTemplate jdbcTemplate,
+		@Qualifier("licensingJdbc") NamedParameterJdbcTemplate licensingJdbc,
+		@Value("${app.licensing.android-system-code:}") String androidSystemCode,
 		JdbcClient jdbcClient,
 		ObjectMapper objectMapper,
 		ReportTemplateService reportTemplateService,
 		StorageProperties storageProperties
 	) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.licensingJdbc = licensingJdbc;
+		this.androidSystemCode = androidSystemCode;
 		this.jdbcClient = jdbcClient;
 		this.objectMapper = objectMapper;
 		this.reportTemplateService = reportTemplateService;
@@ -107,6 +116,11 @@ public class InspectionPackageService {
 		ensureExportsDirectory();
 		Path exportPath = exportsDirectory.resolve(safeFileName).normalize();
 		validateInsideExports(exportPath);
+		try {
+			Files.deleteIfExists(exportPath);
+		} catch (IOException exception) {
+			throw new BusinessValidationException("No fue posible reemplazar el paquete de exportación anterior");
+		}
 
 		Map<String, byte[]> entries = new LinkedHashMap<>();
 		Map<String, Object> selectedInspection = singleRow(
@@ -144,6 +158,8 @@ public class InspectionPackageService {
 			List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT * FROM " + tableName);
 			entries.put("globals/" + tableName + ".json", jsonBytes(payload(tableName, "GLOBAL", Map.of(), rows)));
 		}
+		List<Map<String, Object>> offlineUsers = offlineUsers();
+		entries.put("globals/usuarios.json", jsonBytes(payload("usuarios", "OFFLINE_PROJECTION", Map.of("system_code", androidSystemCode), offlineUsers)));
 
 		if (tableExists("inspecciones")) {
 			entries.put("inspection/inspecciones.json", jsonBytes(payload(
@@ -236,7 +252,7 @@ public class InspectionPackageService {
 		Map<String, Object> manifest = new LinkedHashMap<>();
 		manifest.put("package_type", "inspection_export");
 		manifest.put("format_version", 1);
-		manifest.put("schema_version", 1);
+		manifest.put("schema_version", 2);
 		manifest.put("source_system", "etic-springboot");
 		manifest.put("target_system", "etic-kotlin");
 		manifest.put("exported_at", Instant.now().toString());
@@ -746,12 +762,14 @@ public class InspectionPackageService {
 		return ALLOWED_IMPORT_PATHS.contains(path)
 			|| "globals/export_table_scope.json".equals(path)
 			|| isTemplatePath(path)
-			|| configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
+			|| (!"globals/usuarios.json".equalsIgnoreCase(path)
+				&& configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
 	}
 
 	private boolean isDeleteEnabled(String path) {
 		return DELETE_ENABLED_PATHS.contains(path)
-			|| configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path));
+			|| (!"globals/usuarios.json".equalsIgnoreCase(path)
+				&& configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
 	}
 
 	private boolean isTemplatePath(String path) {
@@ -772,7 +790,7 @@ public class InspectionPackageService {
 			if (!tableName.matches("[A-Za-z0-9_]+")) {
 				throw new BusinessValidationException("Nombre de tabla no válido en export_table_scope: " + tableName);
 			}
-			if (!tableName.isBlank()) {
+			if (!tableName.isBlank() && !"usuarios".equalsIgnoreCase(tableName)) {
 				tableNames.add(tableName);
 			}
 		}
@@ -780,6 +798,54 @@ public class InspectionPackageService {
 			throw new BusinessValidationException("No hay tablas globales habilitadas en export_table_scope");
 		}
 		return tableNames;
+	}
+
+	private List<Map<String, Object>> offlineUsers() {
+		if (androidSystemCode.isBlank()) {
+			throw new BusinessValidationException("APP_LICENSING_ANDROID_SYSTEM_CODE es obligatorio para exportar usuarios offline");
+		}
+		List<Map<String, Object>> users = licensingJdbc.queryForList("""
+			SELECT DISTINCT u.Id_User AS Id_Usuario, u.Username AS Usuario,
+			       TRIM(CONCAT_WS(' ',u.First_Name,u.Last_Name,u.Second_Last_Name)) AS Nombre,
+			       u.Password_Hash AS Password, u.Email, u.Telefono,
+			       (SELECT CASE
+			                   WHEN a.Data_Type='SELECT' THEN COALESCE(o.Display_Value,v.Value_Text)
+			                   WHEN a.Data_Type='TEXT' THEN v.Value_Text
+			                   ELSE NULL
+			               END
+			        FROM system_attributes a
+			        JOIN user_system_attribute_values v ON v.Id_Attribute=a.Id_Attribute
+			         AND v.Id_User=u.Id_User AND v.Id_System=s.Id_System
+			        LEFT JOIN system_attribute_options o ON o.Id_Attribute=a.Id_Attribute
+			         AND o.Value_Code=v.Value_Text AND o.Is_Active=TRUE
+			        WHERE a.Id_System=s.Id_System AND a.Code='NIVEL_DE_CERTIFICACION'
+			          AND a.Is_Active=TRUE LIMIT 1) AS nivelCertificacion,
+			       'Activo' AS Estatus
+			FROM users u
+			JOIN user_system_access usa ON usa.Id_User=u.Id_User
+			JOIN systems s ON s.Id_System=usa.Id_System
+			WHERE s.Code=:systemCode AND s.System_Type='ANDROID'
+			  AND s.Is_Active=TRUE AND s.Status='ACTIVE'
+			  AND usa.Is_Active=TRUE AND usa.Status='ACTIVE'
+			  AND u.Is_Active=TRUE AND u.Status='ACTIVE'
+			ORDER BY u.Username,u.Id_User
+			""", Map.of("systemCode", androidSystemCode));
+		if (users.isEmpty()) {
+			throw new BusinessValidationException("No hay usuarios activos autorizados para ETIC PdM");
+		}
+		for (Map<String, Object> user : users) {
+			String id = asString(user.get("Id_Usuario"));
+			String username = asString(user.get("Usuario"));
+			String password = asString(user.get("Password"));
+			String name = asString(user.get("Nombre"));
+			if (id == null || id.isBlank() || username == null || username.isBlank()
+				|| name == null || name.isBlank()
+				|| password == null || !(password.matches("\\$argon2id\\$v=\\d+\\$m=\\d+,t=\\d+,p=\\d+\\$[A-Za-z0-9+/]+={0,2}\\$[A-Za-z0-9+/]+={0,2}")
+					|| password.matches("\\$2[aby]\\$(0[4-9]|[12][0-9]|3[01])\\$[./A-Za-z0-9]{53}"))) {
+				throw new BusinessValidationException("License Control contiene un usuario offline con identidad o hash inválido");
+			}
+		}
+		return users;
 	}
 
 	private Map<String, Object> payload(String table, String scope, Map<String, Object> filters, List<Map<String, Object>> rows) {
