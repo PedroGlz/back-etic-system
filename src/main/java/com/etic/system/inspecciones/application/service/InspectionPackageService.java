@@ -317,6 +317,10 @@ public class InspectionPackageService {
 			throw new BusinessValidationException("El paquete seleccionado no corresponde a un resultado de inspección");
 		}
 		validateInspectionIdentity(manifest, expectedInspectionId);
+        String expectedSiteId = asString(singleRow("SELECT Id_Sitio FROM inspecciones WHERE Id_Inspeccion = ?", expectedInspectionId).get("Id_Sitio"));
+        if (expectedSiteId == null || expectedSiteId.isBlank()) {
+            throw new BusinessValidationException("La inspección no tiene un sitio válido para importar");
+        }
 
 		String deltaMode = asString(manifest.getOrDefault("delta_mode", UPSERT)).toUpperCase(Locale.ROOT);
 		if (!UPSERT.equals(deltaMode) && !UPSERT_DELETE.equals(deltaMode)) {
@@ -344,10 +348,15 @@ public class InspectionPackageService {
 			if (tableName == null || tableName.isBlank()) {
 				throw new BusinessValidationException("Uno de los archivos del paquete no declara su tabla");
 			}
-			if (!tableExists(tableName)) {
-				continue;
-			}
-			applyPayload(tableName, payload, UPSERT_DELETE.equals(deltaMode) && isDeleteEnabled(path));
+            String expectedTable = path.substring(path.lastIndexOf('/') + 1, path.length() - ".json".length());
+            if (!expectedTable.equals(tableName)) {
+                throw new BusinessValidationException("La tabla declarada no corresponde al archivo " + path);
+            }
+            if (!tableExists(tableName)) {
+                throw new BusinessValidationException("Falta la tabla requerida por el paquete: " + tableName);
+            }
+            applyPayload(tableName, payload, UPSERT_DELETE.equals(deltaMode) && isDeleteEnabled(path),
+                ALLOWED_IMPORT_PATHS.contains(path) ? expectedSiteId : null, expectedInspectionId);
 			processedPaths.add(path);
 		}
 
@@ -527,22 +536,24 @@ public class InspectionPackageService {
 		cell.setCellValue(formatValue(value));
 	}
 
-	private void applyPayload(String tableName, Map<String, Object> payload, boolean deleteEnabled) {
+	private void applyPayload(String tableName, Map<String, Object> payload, boolean deleteEnabled, String siteId, String inspectionId) {
 		TableMeta meta = tableMeta(tableName);
 		List<Map<String, Object>> rows = objectMapper.convertValue(payload.getOrDefault("rows", List.of()), new TypeReference<>() {});
 		List<Map<String, Object>> deletedKeys = objectMapper.convertValue(payload.getOrDefault("deleted_keys", List.of()), new TypeReference<>() {});
 		for (Map<String, Object> row : rows) {
-			upsertRow(tableName, meta, row);
+			if (siteId != null) validateRowSite(tableName, meta, row, siteId, inspectionId);
+            upsertRow(tableName, meta, row);
 		}
 		if (deleteEnabled) {
 			for (Map<String, Object> deletedKey : deletedKeys) {
-				deleteRow(tableName, meta, deletedKey);
+				if (siteId != null) validateRowSite(tableName, meta, deletedKey, siteId, inspectionId);
+                deleteRow(tableName, meta, deletedKey);
 			}
 		}
 	}
 
 	private void upsertRow(String tableName, TableMeta meta, Map<String, Object> payload) {
-		Map<String, Object> filtered = filterColumns(payload, meta);
+		Map<String, Object> filtered = filterColumns(tableName, payload, meta);
 		if (filtered.isEmpty()) {
 			return;
 		}
@@ -615,21 +626,69 @@ public class InspectionPackageService {
 		return count != null && count > 0;
 	}
 
-	private Map<String, Object> filterColumns(Map<String, Object> payload, TableMeta meta) {
+	private Map<String, Object> filterColumns(String tableName, Map<String, Object> payload, TableMeta meta) {
 		Map<String, Object> filtered = new LinkedHashMap<>();
 		Map<String, String> canonicalColumns = new HashMap<>();
 		meta.columns.forEach(column -> canonicalColumns.put(column.toLowerCase(Locale.ROOT), column));
+		List<String> unsupported = new ArrayList<>();
 		for (Map.Entry<String, Object> entry : payload.entrySet()) {
 			String column = canonicalColumns.get(entry.getKey().toLowerCase(Locale.ROOT));
 			if (column != null) {
-				Object value = meta.temporalColumns.contains(column)
+				if (meta.temporalColumns.contains(column) && entry.getValue() instanceof String text && text.isBlank()) {
+                    throw new BusinessValidationException(tableName + "." + column
+                        + " no admite texto vacío como fecha/hora; no se convertirá silenciosamente a NULL");
+                }
+                Object value = meta.temporalColumns.contains(column)
 					? DateValueNormalizer.normalizeDatabaseDateValue(entry.getValue())
 					: entry.getValue();
 				filtered.put(column, value);
+			} else if (ALLOWED_IMPORT_PATHS.stream().anyMatch(path -> path.endsWith("/" + tableName + ".json"))) {
+				unsupported.add(entry.getKey());
 			}
+		}
+		if (!unsupported.isEmpty()) {
+			throw new BusinessValidationException(tableName + " contiene columnas de Android no soportadas por MySQL: " + String.join(", ", unsupported));
 		}
 		return filtered;
 	}
+    private void validateRowSite(String table, TableMeta meta, Map<String, Object> row, String siteId, String inspectionId) {
+        Map<String, Object> filtered = filterColumns(table, row, meta);
+        Map<String, Object> keys = primaryKeyValues(meta, filtered);
+        if (meta.primaryKeys.isEmpty() || keys.size() != meta.primaryKeys.size() || keys.containsValue(null)) {
+            throw new BusinessValidationException("Falta la llave primaria en una fila del paquete para " + table);
+        }
+        String where = meta.primaryKeys.stream().map(key -> key + " = ?")
+            .collect(java.util.stream.Collectors.joining(" AND "));
+        Map<String, Object> existing = singleRow("SELECT * FROM " + table + " WHERE " + where, keys.values().toArray());
+        if (existing != null) validateRowOwnership(table, existing, siteId, inspectionId);
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (existing != null) merged.putAll(existing);
+        merged.putAll(filtered);
+        validateRowOwnership(table, merged, siteId, inspectionId);
+    }
+
+    private void validateRowOwnership(String table, Map<String, Object> row, String siteId, String inspectionId) {
+        String rowSite = asString(row.get("Id_Sitio"));
+        String rowInspection = asString(row.get("Id_Inspeccion"));
+        if ("datos_reporte".equals(table) && !inspectionId.equalsIgnoreCase(rowInspection)) {
+            throw new BusinessValidationException("datos_reporte pertenece a otra inspección o no identifica su inspección");
+        }
+        if ("historial_problemas".equals(table)) {
+            Map<String, Object> problem = singleRow("SELECT Id_Sitio FROM problemas WHERE Id_Problema = ?", row.get("Id_Problema"));
+            rowSite = problem == null ? null : asString(problem.get("Id_Sitio"));
+        }
+        if (rowInspection != null && !"inspecciones".equals(table)) {
+            Map<String, Object> inspection = singleRow("SELECT Id_Sitio FROM inspecciones WHERE Id_Inspeccion = ?", rowInspection);
+            String linkedSite = inspection == null ? null : asString(inspection.get("Id_Sitio"));
+            if (!siteId.equalsIgnoreCase(linkedSite)) {
+                throw new BusinessValidationException("La fila de " + table + " referencia una inspección ajena al sitio");
+            }
+            if (rowSite == null) rowSite = linkedSite;
+        }
+        if (!siteId.equalsIgnoreCase(rowSite)) {
+            throw new BusinessValidationException("La fila de " + table + " no pertenece al sitio de la inspección");
+        }
+    }
 
 	private void validateInspectionIdentity(Map<String, Object> manifest, String expectedInspectionId) {
 		if (expectedInspectionId == null || expectedInspectionId.isBlank()) {
