@@ -114,6 +114,13 @@ public class LegacyImportService {
 		return analysisCache.computeIfAbsent(id, ignored -> store.readAnalysis(staged));
 	}
 
+	Path stagingDirectory(String id, String createdBy) {
+		LegacyImportJob job = status(id, createdBy);
+		Path staged = stagingPath(job.id());
+		if (!store.isReady(staged)) throw new ResourceNotFoundException("Staging de importación legacy no encontrado");
+		return staged;
+	}
+
 	public LegacyImportJob status(String id, String createdBy) {
 		LegacyImportJob job = repository.findById(id)
 			.orElseThrow(() -> new ResourceNotFoundException("Importación legacy no encontrada"));

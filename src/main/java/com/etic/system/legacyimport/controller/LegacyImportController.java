@@ -3,8 +3,10 @@ package com.etic.system.legacyimport.controller;
 import com.etic.system.legacyimport.model.LegacyImportAnalysis;
 import com.etic.system.legacyimport.model.LegacyImportJob;
 import com.etic.system.legacyimport.model.LegacyImportStatus;
+import com.etic.system.legacyimport.model.LegacyHomologation;
 import com.etic.system.legacyimport.service.LegacyImportService;
 import com.etic.system.legacyimport.service.LegacyEtlExecutionService;
+import com.etic.system.legacyimport.service.LegacyHomologationService;
 import com.etic.system.legacyimport.report.LegacyEtlReport;
 import com.etic.system.auth.domain.AuthenticatedUser;
 import jakarta.servlet.http.HttpSession;
@@ -28,10 +30,12 @@ public class LegacyImportController {
 
 	private final LegacyImportService service;
 	private final LegacyEtlExecutionService executionService;
+	private final LegacyHomologationService homologationService;
 
-	public LegacyImportController(LegacyImportService service, LegacyEtlExecutionService executionService) {
+	public LegacyImportController(LegacyImportService service, LegacyEtlExecutionService executionService, LegacyHomologationService homologationService) {
 		this.service = service;
 		this.executionService = executionService;
+		this.homologationService = homologationService;
 	}
 
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -49,8 +53,18 @@ public class LegacyImportController {
 
 	@PostMapping("/{id}/execute")
 	@ResponseStatus(HttpStatus.ACCEPTED)
-	public void execute(@PathVariable String id, HttpSession session) {
-		executionService.start(id, requireAdministrator(session).id());
+	public void execute(@PathVariable String id, @org.springframework.web.bind.annotation.RequestBody(required = false) LegacyHomologation.Request request, HttpSession session) {
+		String userId = requireAdministrator(session).id();
+		if (request == null) {
+			executionService.start(id, userId);
+			return;
+		}
+		executionService.start(id, userId, homologationService.validate(id, userId, request));
+	}
+
+	@GetMapping("/{id}/homologation")
+	public LegacyHomologation.Review homologation(@PathVariable String id, @RequestParam(required = false) String inspectionId, HttpSession session) {
+		return homologationService.review(id, requireAdministrator(session).id(), inspectionId);
 	}
 
 	@GetMapping("/active")

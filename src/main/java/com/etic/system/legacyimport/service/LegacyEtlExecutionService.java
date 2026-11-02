@@ -5,6 +5,7 @@ import com.etic.system.legacyimport.config.LegacyImportProperties;
 import com.etic.system.legacyimport.model.LegacyImportAnalysis;
 import com.etic.system.legacyimport.model.LegacyImportJob;
 import com.etic.system.legacyimport.model.LegacyImportStatus;
+import com.etic.system.legacyimport.model.LegacyHomologation;
 import com.etic.system.legacyimport.model.ValidationSeverity;
 import com.etic.system.legacyimport.parser.LegacyDatasetStore;
 import com.etic.system.legacyimport.report.LegacyEtlReport;
@@ -35,7 +36,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class LegacyEtlExecutionService {
@@ -64,12 +68,16 @@ public class LegacyEtlExecutionService {
 
 	public LegacyEtlReport execute(String id,String createdBy){
 		LegacyImportJob job=claim(id,createdBy);
-		return executeClaimed(job);
+		return executeClaimed(job,null);
 	}
 
 	public void start(String id,String createdBy){
+		start(id,createdBy,null);
+	}
+
+	public void start(String id,String createdBy,LegacyHomologation.Selection selection){
 		LegacyImportJob job=claim(id,createdBy);
-		try{taskExecutor.execute(()->{try{executeClaimed(job);}catch(RuntimeException exception){log.warn("LEGACY IMPORT - job {} finalizó con error: {}",id,rootMessage(exception));}});}
+		try{taskExecutor.execute(()->{try{executeClaimed(job,selection);}catch(RuntimeException exception){log.warn("LEGACY IMPORT - job {} finalizó con error: {}",id,rootMessage(exception));}});}
 		catch(RuntimeException exception){jobs.updateState(id,LegacyImportStatus.FAILED,"VALIDATION",100,"No fue posible iniciar la ejecución",LocalDateTime.now());throw new BusinessValidationException("No fue posible iniciar la importación");}
 	}
 
@@ -83,7 +91,7 @@ public class LegacyEtlExecutionService {
 		return job;
 	}
 
-	private LegacyEtlReport executeClaimed(LegacyImportJob job){
+	private LegacyEtlReport executeClaimed(LegacyImportJob job,LegacyHomologation.Selection selection){
 		String id=job.id();
 		Path staged=baseDirectory.resolve(id+"-datasets").normalize();
 		LegacyEtlReportBuilder report=new LegacyEtlReportBuilder(id);
@@ -97,7 +105,7 @@ public class LegacyEtlExecutionService {
 			phase(id,"CUSTOMERS",20,context,report,()->customers.transform(context));context.release("customers");
 			phase(id,"SITES",30,context,report,()->sites.transform(context));context.release("customerSites");
 			phase(id,"LOCATIONS",42,context,report,()->locations.transform(context));
-			phase(id,"INSPECTIONS",55,context,report,()->inspections.transform(context));context.releaseShared("groupByCustomer");
+			phase(id,"INSPECTIONS",55,context,report,()->{inspections.transform(context);if(selection!=null){context.flushPending();applyHomologation(context,selection);}});context.releaseShared("groupByCustomer");
 			phase(id,"BASELINES",68,context,report,()->baselines.transform(context));context.release("locationBaselines","locationBaselinePhotos","inspectionDetails");
 			phase(id,"PROBLEMS",82,context,report,()->problems.transform(context));context.release("problemPhotos","equipment","equipmentGroups","faults","locations");context.releaseShared("locationPaths");
 			phase(id,"CHRONIC_HISTORY",93,context,report,()->chronicHistory.transform(context));context.releaseAll();
@@ -108,6 +116,25 @@ public class LegacyEtlExecutionService {
 			return result;
 		}catch(Exception exception){LocalDateTime finishedAt=LocalDateTime.now();try{writeArtifacts(id,report.build(),"FAILED",rootMessage(exception),job,finishedAt);}catch(IOException ignored){}jobs.updateState(id,LegacyImportStatus.FAILED,"VALIDATION",100,rootMessage(exception),finishedAt);
 			if(exception instanceof BusinessValidationException validation)throw validation;throw new BusinessValidationException(rootMessage(exception));}
+	}
+
+	private void applyHomologation(LegacyEtlContext context,LegacyHomologation.Selection selection){
+		batchRepository.updateDerived("inspecciones","Id_Inspeccion",List.of(Map.of(
+			"Id_Inspeccion",selection.inspectionId(),"Id_Grupo_Sitios",selection.siteGroupId(),"Id_Sitio",selection.siteId())));
+		List<Map<String,Object>> detailUpdates=new ArrayList<>();
+		Map<String,Map<String,Object>> locations=context.index("locations","LocationID");
+		Map<String,Map<String,Object>> locationUpdates=new LinkedHashMap<>();
+		context.forEach("inspectionDetails",detail->{
+			if(!selection.inspectionId().equalsIgnoreCase(context.text(detail,"InspectionID")))return;
+			detailUpdates.add(Map.of("Id_Inspeccion_Det",context.text(detail,"InspectionDetailID"),"Id_Sitio",selection.siteId()));
+			String locationId=context.text(detail,"LocationID");Map<String,Object> location=locations.get(locationId);if(location==null)return;
+			String source=context.text(location,"PriorityStatusID");String target=selection.priorityMappings().entrySet().stream().filter(entry->entry.getKey().equalsIgnoreCase(source)).map(Map.Entry::getValue).findFirst().orElse(null);
+			if(target!=null)locationUpdates.put(locationId,Map.of("Id_Ubicacion",locationId,"Id_Tipo_Prioridad",target));
+		});
+		batchRepository.updateDerived("inspecciones_det","Id_Inspeccion_Det",detailUpdates);
+		batchRepository.updateDerived("ubicaciones","Id_Ubicacion",new ArrayList<>(locationUpdates.values()));
+		if(selection.updateLegalName())batchRepository.updateDerived("clientes","Id_Cliente",List.of(Map.of("Id_Cliente",selection.customerId(),"Razon_Social",selection.legalName())));
+		context.report().warning("homologacion","InspectionID "+selection.inspectionId()+", InspectionNo "+selection.inspectionNumber()+", selección "+(selection.automaticSelection()?"automática":"manual")+": razón social '"+selection.sourceLegalName()+"' → '"+selection.legalName()+"', sitio "+selection.sourceSiteId()+" → "+selection.siteId()+", grupo "+selection.siteGroupId()+", prioridades de ubicaciones "+selection.priorityMappings());
 	}
 
 	private void phase(String id,String phase,int progress,LegacyEtlContext context,LegacyEtlReportBuilder report,Runnable action){
