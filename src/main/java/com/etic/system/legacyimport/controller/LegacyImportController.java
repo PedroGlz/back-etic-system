@@ -59,7 +59,7 @@ public class LegacyImportController {
 			executionService.start(id, userId);
 			return;
 		}
-		executionService.start(id, userId, homologationService.validate(id, userId, request));
+		executionService.start(id, userId, homologationService.validate(id, userId, request, userId));
 	}
 
 	@GetMapping("/{id}/homologation")
