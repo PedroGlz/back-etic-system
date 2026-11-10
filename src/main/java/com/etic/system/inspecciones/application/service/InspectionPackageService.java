@@ -402,7 +402,7 @@ public class InspectionPackageService {
 		Path templatePath = reportTemplateService.filesForExport().stream()
 			.filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).matches("lista_problemas.*\\.xlsx"))
 			.findFirst()
-			.orElseThrow(() -> new BusinessValidationException("No se encontrÃ³ la plantilla lista_problemas.xlsx en plantillas de reportes"));
+			.orElseThrow(() -> new BusinessValidationException("No se encontró la plantilla lista_problemas.xlsx en plantillas de reportes"));
 
 		try (InputStream templateInputStream = Files.newInputStream(templatePath);
 			 Workbook workbook = WorkbookFactory.create(templateInputStream)) {

@@ -70,7 +70,7 @@ public class LegacyHomologationService {
 		List<LegacyHomologation.PriorityImpact> impacts=priorityImpacts(staged,reference.inspectionId(),inactiveIds);
 		List<LegacyHomologation.InspectionOption> inspectionOptions=references.stream()
 			.sorted(Comparator.comparing(Reference::number,Comparator.nullsLast(Comparator.reverseOrder())).thenComparing(Reference::inspectionDate,Comparator.nullsLast(Comparator.reverseOrder())))
-			.map(value->new LegacyHomologation.InspectionOption(value.inspectionId(),value.number(),value.inspectionDate(),text(customers.get(value.customerId()),"Name"))).toList();
+			.map(value->new LegacyHomologation.InspectionOption(value.inspectionId(),value.number(),value.inspectionDate(),text(customers.get(value.customerId()),"Name"),text(sites.get(value.siteId()),"SiteName"),false)).toList();
 		return new LegacyHomologation.Review(
 			reference.inspectionId(), reference.number(), automatic.inspectionId(), inspectionOptions,
 			reference.customerId(), text(customer, "Name"), reference.siteId(), text(site, "SiteName"), inactive,
@@ -90,6 +90,8 @@ public class LegacyHomologationService {
 		if (request == null) throw new BusinessValidationException("La homologación es obligatoria");
 		LegacyHomologation.Review review = review(id, createdBy, request.inspectionId());
 		Path staged=imports.stagingDirectory(id,createdBy);
+		if(!existingInspectionIds(review.inspections().stream().map(LegacyHomologation.InspectionOption::inspectionId).toList()).isEmpty()&&!request.confirmExistingInspections())
+			throw new BusinessValidationException("Una o más inspecciones del archivo ya están registradas en ETIC Online. Confirma la reimportación antes de continuar");
 		validateInspectionLocations(staged,review);
 		if (request.automaticSelection() && !same(review.automaticInspectionId(), request.inspectionId()))
 			throw new BusinessValidationException("La selección marcada como automática no corresponde a la inspección automática actual");
@@ -121,6 +123,14 @@ public class LegacyHomologationService {
 		if(relationshipChanges&&!request.confirmRelationshipChanges())throw new BusinessValidationException("Los cambios de cliente, grupo o sitio pueden afectar otras inspecciones. Confirma expresamente las nuevas relaciones para continuar");
 		return new LegacyHomologation.Selection(review.inspectionId(), review.inspectionNumber(), request.automaticSelection(), review.customerId(),targetCustomerId, review.customerName(), review.siteId(), legalName, updateLegalName,
 			group.id(),group.name(),group.create(),group.updateName(),group.updateCustomer(),site.id(),site.name(),site.update(),moveLocations,request.confirmRelationshipChanges(),relationshipInspections,Map.copyOf(mappings),request.forceGlobalPriorityUpdate(),List.copyOf(impacts),confirmedBy);
+	}
+
+	private Set<String> existingInspectionIds(List<String> inspectionIds){
+		List<String> ids=inspectionIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+		if(ids.isEmpty())return Set.of();
+		String placeholders=String.join(",",ids.stream().map(ignored->"?").toList());Set<String> result=new LinkedHashSet<>();
+		repository.query("SELECT Id_Inspeccion FROM inspecciones WHERE Id_Inspeccion IN ("+placeholders+")",ids.toArray()).forEach(row->add(result,text(row,"Id_Inspeccion")));
+		return result;
 	}
 
 	private List<LegacyHomologation.PriorityImpact> priorityImpacts(Path staged,String inspectionId,Set<String> mappedPriorities){

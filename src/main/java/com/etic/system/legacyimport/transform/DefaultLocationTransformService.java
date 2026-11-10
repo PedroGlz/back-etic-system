@@ -3,6 +3,8 @@ package com.etic.system.legacyimport.transform;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -16,8 +18,10 @@ public class DefaultLocationTransformService implements LocationTransformService
 		locations.forEach((id,row)->nodes.put(id,new LocationHierarchyBuilder.LocationNode(id,c.text(row,"CustomerSiteID"),c.text(row,"ParentID"),c.text(row,"Name"))));
 		Map<String,LocationHierarchyBuilder.LocationPath> paths=hierarchyBuilder.build(nodes);
 		Map<String,Map<String,Object>> equipment=c.index("equipment","EquipmentID");
+		List<Map<String,Object>> omittedLocations=new ArrayList<>();
 		c.transform("locations","ubicaciones","Id_Ubicacion",r->{
 			String id=c.text(r,"LocationID"), equipmentId=c.text(r,"EquipmentID");
+			if(omitted(r))omittedLocations.add(c.row("Id_Ubicacion",id,"Estatus","Inactivo"));
 			Map<String,Object> equipmentRow=equipment.get(equipmentId);
 			LocationHierarchyBuilder.LocationPath path=paths.get(id);
 			String legacyPath=c.text(r,"LocationPath");
@@ -32,10 +36,14 @@ public class DefaultLocationTransformService implements LocationTransformService
 				"Estatus",inactive(r)?"Inactivo":"Activo","Creado_Por",c.text(r,"CreateUserID"),"Fecha_Creacion",c.value(r,"CreateDate"),
 				"Modificado_Por",c.text(r,"LastUserID"),"Fecha_Mod",c.value(r,"LastModified"));
 		});
+		// Omit es una regla de estado independiente de la fecha: conserva la ubicación y solo la inactiva.
+		c.flushPending();
+		c.repository().updateDerived("ubicaciones","Id_Ubicacion",omittedLocations);
 		c.shared().put("locationPaths",paths);
 	}
 	private String booleanText(Object value){return value==null?null:booleanValue(value)?"SI":"NO";}
 	private boolean booleanValue(Object value){ return value instanceof Boolean b?b:value!=null && ("1".equals(value.toString())||"true".equalsIgnoreCase(value.toString())); }
 	private boolean inactive(Map<String,Object> row){ Object value=row.get("DeleteFlag"); return value!=null&&!"0".equals(value.toString()); }
+	private boolean omitted(Map<String,Object> row){ Object value=row.get("Omit"); return value!=null&&("1".equals(value.toString())||"true".equalsIgnoreCase(value.toString())); }
 	private String normalize(String value){return value.replace('\\','/').replaceAll("^/+|/+$","").toLowerCase();}
 }

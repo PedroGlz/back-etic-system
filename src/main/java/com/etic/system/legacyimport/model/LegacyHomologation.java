@@ -7,7 +7,7 @@ public final class LegacyHomologation {
 	private LegacyHomologation() {}
 
 	public record Option(String id, String label, String parentId, String clientId, boolean defaultValue) {}
-	public record InspectionOption(String inspectionId, Long inspectionNumber, String inspectionDate, String customerName) {}
+	public record InspectionOption(String inspectionId, Long inspectionNumber, String inspectionDate, String customerName, String siteName, boolean existing) {}
 	public record Priority(String sourceId, String sourceLabel, boolean missing) {}
 	public record PriorityImpact(
 		String locationId,
@@ -45,6 +45,7 @@ public final class LegacyHomologation {
 		String siteId,
 		String siteName,
 		boolean automaticSelection,
+		boolean confirmExistingInspections,
 		Map<String, String> priorityMappings,
 		boolean forceGlobalPriorityUpdate,
 		boolean confirmRelationshipChanges

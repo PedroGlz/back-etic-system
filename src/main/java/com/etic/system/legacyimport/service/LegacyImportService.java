@@ -5,10 +5,13 @@ import com.etic.system.legacyimport.config.LegacyImportProperties;
 import com.etic.system.legacyimport.model.LegacyImportAnalysis;
 import com.etic.system.legacyimport.model.LegacyImportJob;
 import com.etic.system.legacyimport.model.LegacyImportStatus;
+import com.etic.system.legacyimport.model.LegacyImportError;
+import com.etic.system.legacyimport.model.LegacyInspectionPresence;
 import com.etic.system.legacyimport.model.LegacyValidationIssue;
 import com.etic.system.legacyimport.parser.LegacyJsonFormatException;
 import com.etic.system.legacyimport.parser.LegacyDatasetStore;
 import com.etic.system.legacyimport.repository.LegacyImportJobRepository;
+import com.etic.system.legacyimport.repository.LegacyBatchUpsertRepository;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.etic.system.shared.domain.exception.ResourceNotFoundException;
 import org.springframework.stereotype.Service;
@@ -22,6 +25,8 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.Locale;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -40,6 +45,7 @@ public class LegacyImportService {
 	private final LegacyImportProperties properties;
 	private final Path importsDirectory;
 	private final LegacyImportCleanupService cleanupService;
+	private final LegacyBatchUpsertRepository batchRepository;
 	private final ConcurrentMap<String, LegacyImportAnalysis> analysisCache = new ConcurrentHashMap<>();
 
 	public LegacyImportService(
@@ -47,13 +53,15 @@ public class LegacyImportService {
 		LegacyDatasetStore store,
 		LegacyImportProperties properties,
 		StorageProperties storageProperties,
-		LegacyImportCleanupService cleanupService
+		LegacyImportCleanupService cleanupService,
+		LegacyBatchUpsertRepository batchRepository
 	) {
 		this.repository = repository;
 		this.store = store;
 		this.properties = properties;
 		this.importsDirectory = storageProperties.basePath().resolve("legacy-imports").normalize();
 		this.cleanupService = cleanupService;
+		this.batchRepository = batchRepository;
 	}
 
 	public LegacyImportJob upload(MultipartFile file, String createdBy) {
@@ -75,20 +83,20 @@ public class LegacyImportService {
 				Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
 			}
 			repository.updateState(id, LegacyImportStatus.VALIDATING, "STRUCTURE", 25, null, null);
-			LegacyImportAnalysis analysis = store.analyzeAndStage(target, staged, properties.getMaxRecords());
+			LegacyImportAnalysis analysis = enrichInspections(store.analyzeAndStage(target, staged, properties.getMaxRecords()),staged);
 			analysisCache.put(id, analysis);
 			repository.updateState(id, LegacyImportStatus.READY, "ANALYSIS", 100, null, null);
 			return repository.findById(id).orElseThrow();
 		} catch (IOException | LegacyJsonFormatException exception) {
-			fail(id, exception.getMessage());
+			fail(id, "ANALYSIS", exception);
 			deleteQuietly(target);
 			deleteDirectory(staged);
-			throw new BusinessValidationException(exception.getMessage());
+			throw new LegacyImportOperationException(id,"ANALYSIS",exception.getMessage(),exception);
 		} catch (RuntimeException exception) {
-			fail(id, exception.getMessage());
+			fail(id, "ANALYSIS", exception);
 			deleteQuietly(target);
 			deleteDirectory(staged);
-			throw exception;
+			throw new LegacyImportOperationException(id,"ANALYSIS",exception.getMessage(),exception);
 		}
 	}
 
@@ -103,7 +111,7 @@ public class LegacyImportService {
 		if (!store.isReady(staged)) {
 			throw new ResourceNotFoundException("Staging de importación legacy no encontrado");
 		}
-		return analysisCache.computeIfAbsent(id, ignored -> store.readAnalysis(staged));
+		return analysisCache.computeIfAbsent(id, ignored -> enrichInspections(store.readAnalysis(staged),staged));
 	}
 
 	LegacyImportAnalysis analysisForExecution(String id) {
@@ -113,6 +121,18 @@ public class LegacyImportService {
 		}
 		return analysisCache.computeIfAbsent(id, ignored -> store.readAnalysis(staged));
 	}
+
+	private LegacyImportAnalysis enrichInspections(LegacyImportAnalysis analysis,Path staged){
+		Map<String,Map<String,Object>> customers=new java.util.LinkedHashMap<>(),sites=new java.util.LinkedHashMap<>();List<Map<String,Object>> inspections=new java.util.ArrayList<>();
+		store.forEach(staged,"customers",row->{String key=text(row,"CustomerID");if(key!=null)customers.put(key,row);});
+		store.forEach(staged,"customerSites",row->{String key=text(row,"CustomerSiteID");if(key!=null)sites.put(key,row);});
+		store.forEach(staged,"inspections",inspections::add);
+		List<String> ids=inspections.stream().map(row->text(row,"InspectionID")).filter(java.util.Objects::nonNull).distinct().toList();Set<String> existing=new java.util.LinkedHashSet<>();
+		if(!ids.isEmpty()){String placeholders=String.join(",",ids.stream().map(ignored->"?").toList());batchRepository.query("SELECT Id_Inspeccion FROM inspecciones WHERE Id_Inspeccion IN ("+placeholders+")",ids.toArray()).forEach(row->{String value=text(row,"Id_Inspeccion");if(value!=null)existing.add(value.toLowerCase(Locale.ROOT));});}
+		return analysis.withInspections(inspections.stream().map(row->{String inspectionId=text(row,"InspectionID"),customerId=text(row,"CustomerID"),siteId=text(row,"CustomerSiteID");return new LegacyInspectionPresence(inspectionId,longValue(row.get("InspectionNo")),text(customers.get(customerId),"Name"),text(sites.get(siteId),"SiteName"),inspectionId!=null&&existing.contains(inspectionId.toLowerCase(Locale.ROOT)));}).toList());
+	}
+	private String text(Map<String,Object> row,String key){if(row==null||row.get(key)==null||row.get(key).toString().isBlank())return null;return row.get(key).toString().trim();}
+	private Long longValue(Object value){if(value==null||value.toString().isBlank())return null;return value instanceof Number number?number.longValue():Long.valueOf(value.toString());}
 
 	Path stagingDirectory(String id, String createdBy) {
 		LegacyImportJob job = status(id, createdBy);
@@ -130,16 +150,16 @@ public class LegacyImportService {
 
 	public Optional<LegacyImportJob> active(String createdBy) {
 		Optional<LegacyImportJob> active = repository.findActiveByUser(createdBy)
-			.filter(job -> job.status() != LegacyImportStatus.COMPLETED && job.status() != LegacyImportStatus.FAILED);
+			.filter(job -> job.status() == LegacyImportStatus.PROCESSING
+				|| job.status() == LegacyImportStatus.VALIDATING_RESULT);
 		if (active.isEmpty()) return Optional.empty();
 
 		LegacyImportJob job = active.get();
 		if (store.isReady(stagingPath(job.id()))) return Optional.of(job);
 
-		if (job.status() == LegacyImportStatus.READY
-			|| job.status() == LegacyImportStatus.PROCESSING
+		if (job.status() == LegacyImportStatus.PROCESSING
 			|| job.status() == LegacyImportStatus.VALIDATING_RESULT) {
-			fail(job.id(), "Staging temporal perdido o incompleto");
+			fail(job.id(), "RECOVERY", new IllegalStateException("Staging temporal perdido o incompleto"));
 		}
 		return Optional.empty();
 	}
@@ -194,10 +214,17 @@ public class LegacyImportService {
 		return path;
 	}
 
-	private void fail(String id, String message) {
+	public LegacyImportError error(String id,String createdBy){
+		LegacyImportJob job=status(id,createdBy);
+		return repository.findError(job.id()).orElseThrow(()->new ResourceNotFoundException("Diagnóstico de error no disponible"));
+	}
+
+	private void fail(String id,String stage,Throwable error) {
 		analysisCache.remove(id);
+		String message=error.getMessage()==null?"Error durante la importación histórica":error.getMessage();
 		repository.updateState(id, LegacyImportStatus.FAILED, "VALIDATION", 100,
-			message == null ? "Error de validación" : message, LocalDateTime.now());
+			message, LocalDateTime.now());
+		repository.saveError(id,stage,message,error);
 	}
 
 	private void deleteQuietly(Path path) {

@@ -7,6 +7,7 @@ import com.etic.system.legacyimport.model.LegacyImportStatus;
 import com.etic.system.legacyimport.parser.LegacySqlScriptParser;
 import com.etic.system.legacyimport.parser.LegacyDatasetStore;
 import com.etic.system.legacyimport.repository.LegacyImportJobRepository;
+import com.etic.system.legacyimport.repository.LegacyBatchUpsertRepository;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class LegacyImportServiceTest {
 		ObjectMapper mapper = new ObjectMapper();
 		LegacySqlScriptParser parser = spy(new LegacySqlScriptParser(mapper));
 		LegacyImportService service = new LegacyImportService(jobs, new LegacyDatasetStore(mapper, parser),
-			new LegacyImportProperties(), storage, cleanup);
+			new LegacyImportProperties(), storage, cleanup, mock(LegacyBatchUpsertRepository.class));
 		try (InputStream fixture = getClass().getResourceAsStream("/fixtures/etic-legacy-v1-small.sql")) {
 			MockMultipartFile upload = new MockMultipartFile("file", "respaldo.sql", "application/sql", fixture);
 			when(jobs.findById(any())).thenAnswer(invocation -> java.util.Optional.of(new LegacyImportJob(
@@ -61,12 +62,13 @@ class LegacyImportServiceTest {
 	void recoversAnalysisFromStagingWithoutSqlAfterRestart(@TempDir Path temporary) throws Exception {
 		LegacyImportJobRepository jobs=mock(LegacyImportJobRepository.class);StorageProperties storage=new StorageProperties();storage.setPath(temporary.toString());
 		ObjectMapper mapper=new ObjectMapper();LegacySqlScriptParser parser=spy(new LegacySqlScriptParser(mapper));
-		LegacyImportService first=new LegacyImportService(jobs,new LegacyDatasetStore(mapper,parser),new LegacyImportProperties(),storage,mock(LegacyImportCleanupService.class));
+		LegacyBatchUpsertRepository batchRepository=mock(LegacyBatchUpsertRepository.class);
+		LegacyImportService first=new LegacyImportService(jobs,new LegacyDatasetStore(mapper,parser),new LegacyImportProperties(),storage,mock(LegacyImportCleanupService.class),batchRepository);
 		when(jobs.findById(any())).thenAnswer(invocation->java.util.Optional.of(new LegacyImportJob(invocation.getArgument(0),"respaldo.sql",LegacyImportStatus.READY,"ANALYSIS",100,java.time.LocalDateTime.now(),null,null,"ADMIN")));
 		try(InputStream fixture=getClass().getResourceAsStream("/fixtures/etic-legacy-v1-small.sql")){
 			LegacyImportJob job=first.upload(new MockMultipartFile("file","respaldo.sql","application/sql",fixture),"ADMIN");
 			Files.delete(temporary.resolve("legacy-imports").resolve(job.id()+".sql"));
-			LegacyImportService restarted=new LegacyImportService(jobs,new LegacyDatasetStore(mapper,parser),new LegacyImportProperties(),storage,mock(LegacyImportCleanupService.class));
+			LegacyImportService restarted=new LegacyImportService(jobs,new LegacyDatasetStore(mapper,parser),new LegacyImportProperties(),storage,mock(LegacyImportCleanupService.class),batchRepository);
 			assertThat(restarted.analysis(job.id(),"ADMIN").problemas()).isEqualTo(3);
 			verify(parser,times(1)).analyzeAndStage(any(),any(),any(Long.class));
 			verify(parser,never()).analyze(any(),any(Long.class));
@@ -78,7 +80,7 @@ class LegacyImportServiceTest {
 		StorageProperties storage = new StorageProperties(); storage.setPath(temporary.toString());
 		ObjectMapper mapper=new ObjectMapper();
 		LegacyImportService service = new LegacyImportService(mock(LegacyImportJobRepository.class),
-			new LegacyDatasetStore(mapper,new LegacySqlScriptParser(mapper)), new LegacyImportProperties(), storage, mock(LegacyImportCleanupService.class));
+			new LegacyDatasetStore(mapper,new LegacySqlScriptParser(mapper)), new LegacyImportProperties(), storage, mock(LegacyImportCleanupService.class),mock(LegacyBatchUpsertRepository.class));
 		MockMultipartFile upload = new MockMultipartFile("file", "legacy.json", "application/json", "{}".getBytes());
 		assertThatThrownBy(() -> service.upload(upload, "ADMIN")).isInstanceOf(BusinessValidationException.class)
 			.hasMessageContaining(".sql");
@@ -156,7 +158,7 @@ class LegacyImportServiceTest {
 		StorageProperties storage = new StorageProperties();
 		storage.setPath(temporary.toString());
 		return new LegacyImportService(jobs, store, new LegacyImportProperties(), storage,
-			mock(LegacyImportCleanupService.class));
+			mock(LegacyImportCleanupService.class),mock(LegacyBatchUpsertRepository.class));
 	}
 
 	private LegacyImportJob activeJob(LegacyImportStatus status) {

@@ -29,8 +29,13 @@ public record LegacyImportAnalysis(
 	long fases,
 	long ambientes,
 	long relacionesEquipoFalla,
-	List<LegacyValidationIssue> alerts
+	List<LegacyValidationIssue> alerts,
+	List<LegacyInspectionPresence> inspectionPresence
 ) {
+	public LegacyImportAnalysis(long clientes,long sitios,long equipos,long categoriasEquipos,long fabricantes,long tiposInspeccion,long estatusInspeccion,long estatusDetalle,long inspecciones,long detalles,long ubicaciones,long lineasBase,long fotosLineaBase,long problemas,long problemasCronicos,long aparicionesProblemas,long aparicionesPie,long fotosProblemas,long severidades,long prioridades,long fallas,long tiposFalla,long causas,long fases,long ambientes,long relacionesEquipoFalla,List<LegacyValidationIssue> alerts){
+		this(clientes,sitios,equipos,categoriasEquipos,fabricantes,tiposInspeccion,estatusInspeccion,estatusDetalle,inspecciones,detalles,ubicaciones,lineasBase,fotosLineaBase,problemas,problemasCronicos,aparicionesProblemas,aparicionesPie,fotosProblemas,severidades,prioridades,fallas,tiposFalla,causas,fases,ambientes,relacionesEquipoFalla,alerts,List.of());
+	}
+	public LegacyImportAnalysis withInspections(List<LegacyInspectionPresence> values){return new LegacyImportAnalysis(clientes,sitios,equipos,categoriasEquipos,fabricantes,tiposInspeccion,estatusInspeccion,estatusDetalle,inspecciones,detalles,ubicaciones,lineasBase,fotosLineaBase,problemas,problemasCronicos,aparicionesProblemas,aparicionesPie,fotosProblemas,severidades,prioridades,fallas,tiposFalla,causas,fases,ambientes,relacionesEquipoFalla,alerts,List.copyOf(values));}
 	public boolean hasErrors() {
 		return alerts.stream().anyMatch(issue -> issue.severity() == ValidationSeverity.ERROR);
 	}

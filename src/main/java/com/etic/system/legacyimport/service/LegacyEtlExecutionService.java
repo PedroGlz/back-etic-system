@@ -78,7 +78,7 @@ public class LegacyEtlExecutionService {
 	public void start(String id,String createdBy,LegacyHomologation.Selection selection){
 		LegacyImportJob job=claim(id,createdBy);
 		try{taskExecutor.execute(()->{try{executeClaimed(job,selection);}catch(RuntimeException exception){log.warn("LEGACY IMPORT - job {} finalizó con error: {}",id,rootMessage(exception));}});}
-		catch(RuntimeException exception){jobs.updateState(id,LegacyImportStatus.FAILED,"VALIDATION",100,"No fue posible iniciar la ejecución",LocalDateTime.now());throw new BusinessValidationException("No fue posible iniciar la importación");}
+		catch(RuntimeException exception){jobs.updateState(id,LegacyImportStatus.FAILED,"VALIDATION",100,"No fue posible iniciar la ejecución",LocalDateTime.now());jobs.saveError(id,"INICIO","No fue posible iniciar la ejecución",exception);throw new BusinessValidationException("No fue posible iniciar la importación: "+rootMessage(exception));}
 	}
 
 	private LegacyImportJob claim(String id,String createdBy){
@@ -114,7 +114,7 @@ public class LegacyEtlExecutionService {
 			LegacyEtlReport result=report.build();LocalDateTime finishedAt=LocalDateTime.now();writeArtifacts(id,result,"COMPLETED",null,job,finishedAt);
 			jobs.updateState(id,LegacyImportStatus.COMPLETED,"VALIDATION",100,null,finishedAt);
 			return result;
-		}catch(Exception exception){LocalDateTime finishedAt=LocalDateTime.now();try{writeArtifacts(id,report.build(),"FAILED",rootMessage(exception),job,finishedAt);}catch(IOException ignored){}jobs.updateState(id,LegacyImportStatus.FAILED,"VALIDATION",100,rootMessage(exception),finishedAt);
+		}catch(Exception exception){LocalDateTime finishedAt=LocalDateTime.now();String failedStage=jobs.findById(id).map(LegacyImportJob::phase).orElse("PROCESSING");try{writeArtifacts(id,report.build(),"FAILED",rootMessage(exception),job,finishedAt);}catch(IOException ignored){}jobs.updateState(id,LegacyImportStatus.FAILED,failedStage,100,rootMessage(exception),finishedAt);jobs.saveError(id,failedStage,selection==null?null:selection.inspectionId(),selection==null?null:selection.inspectionNumber(),rootMessage(exception),exception);
 			if(exception instanceof BusinessValidationException validation)throw validation;throw new BusinessValidationException(rootMessage(exception));}
 	}
 
