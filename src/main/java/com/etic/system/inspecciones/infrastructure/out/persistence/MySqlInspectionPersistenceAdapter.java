@@ -46,6 +46,21 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 	}
 
 	@Override
+	public Optional<InspectionSummary> findPreviousBySite(String siteId) {
+		String sql = baseSelect() + """
+			 WHERE i.Id_Sitio = :siteId
+			   AND i.No_Inspeccion = (
+			       SELECT MAX(previous.No_Inspeccion)
+			       FROM inspecciones previous
+			       WHERE previous.Id_Sitio = :siteId
+			   )
+			""";
+		return jdbc.query(sql, Map.of("siteId", siteId), (rs, rowNum) -> mapSummary(rs))
+			.stream()
+			.findFirst();
+	}
+
+	@Override
 	public Optional<InspectionSession> findSessionById(String inspectionId) {
 		String sql = """
 			SELECT i.Id_Inspeccion AS id, i.No_Inspeccion AS inspectionNumber,
@@ -110,6 +125,15 @@ public class MySqlInspectionPersistenceAdapter implements InspectionPersistenceP
 	@Override
 	public Integer findMaxInspectionNumber() {
 		return jdbc.queryForObject("SELECT MAX(No_Inspeccion) FROM inspecciones", Map.of(), Integer.class);
+	}
+
+	@Override
+	public Integer findMaxInspectionNumberBySite(String siteId) {
+		return jdbc.queryForObject(
+			"SELECT MAX(No_Inspeccion) FROM inspecciones WHERE Id_Sitio = :siteId",
+			Map.of("siteId", siteId),
+			Integer.class
+		);
 	}
 
 	@Override

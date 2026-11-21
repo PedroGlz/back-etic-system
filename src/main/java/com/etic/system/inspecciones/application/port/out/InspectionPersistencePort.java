@@ -14,6 +14,8 @@ public interface InspectionPersistencePort {
 
 	Optional<InspectionSummary> findById(String inspectionId);
 
+	Optional<InspectionSummary> findPreviousBySite(String siteId);
+
 	Optional<InspectionSession> findSessionById(String inspectionId);
 
 	boolean hasOpenInspectionOnSite(String siteId, String excludedInspectionId);
@@ -21,6 +23,8 @@ public interface InspectionPersistencePort {
 	boolean isValidSiteHierarchy(String clientId, String siteGroupId, String siteId);
 
 	Integer findMaxInspectionNumber();
+
+	Integer findMaxInspectionNumberBySite(String siteId);
 
 	List<InspectionLocation> findActiveLocationsBySite(String siteId);
 

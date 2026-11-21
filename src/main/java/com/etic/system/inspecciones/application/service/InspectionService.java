@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class InspectionService {
@@ -35,6 +36,10 @@ public class InspectionService {
 	public InspectionSummary findById(String inspectionId) {
 		return persistencePort.findById(inspectionId)
 			.orElseThrow(() -> new ResourceNotFoundException("No se encontró la inspección solicitada"));
+	}
+
+	public Optional<InspectionSummary> findPreviousBySite(String siteId) {
+		return persistencePort.findPreviousBySite(siteId);
 	}
 
 	public InspectionSession currentSelection(HttpSession session) {
@@ -68,6 +73,7 @@ public class InspectionService {
 
 		Integer maxInspectionNumber = persistencePort.findMaxInspectionNumber();
 		int nextInspectionNumber = maxInspectionNumber == null ? 1 : maxInspectionNumber + 1;
+		Integer previousInspectionNumber = persistencePort.findMaxInspectionNumberBySite(command.siteId());
 		int daysCount = calculateDays(command.startDate(), command.endDate());
 		String photosRoute = "public/Archivos_ETIC/inspecciones/" + nextInspectionNumber;
 
@@ -75,7 +81,7 @@ public class InspectionService {
 			command,
 			statusId,
 			nextInspectionNumber,
-			maxInspectionNumber,
+			previousInspectionNumber,
 			daysCount,
 			photosRoute,
 			userId
