@@ -98,11 +98,48 @@ class InspectionServiceTest {
 		assertEquals(1, persistencePort.createdDetailsCount);
 	}
 
+	@Test
+	void shouldUseGlobalMaximumForNewNumberAndSiteMaximumForPreviousNumber() {
+		StubInspectionPersistencePort persistencePort = new StubInspectionPersistencePort();
+		persistencePort.maxInspectionNumber = 80;
+		persistencePort.maxInspectionNumberBySite = 45;
+		InspectionService service = new InspectionService(persistencePort);
+
+		service.create(commandForSite("site-1"), "user-1");
+
+		assertEquals(81, persistencePort.createdInspectionNumber);
+		assertEquals(45, persistencePort.createdPreviousInspectionNumber);
+		assertEquals("site-1", persistencePort.requestedPreviousInspectionSiteId);
+	}
+
+	@Test
+	void shouldKeepPreviousNumberNullWhenSiteHasNoInspectionHistory() {
+		StubInspectionPersistencePort persistencePort = new StubInspectionPersistencePort();
+		persistencePort.maxInspectionNumber = 80;
+		persistencePort.maxInspectionNumberBySite = null;
+		InspectionService service = new InspectionService(persistencePort);
+
+		service.create(commandForSite("site-without-history"), "user-1");
+
+		assertEquals(81, persistencePort.createdInspectionNumber);
+		assertNull(persistencePort.createdPreviousInspectionNumber);
+		assertEquals("site-without-history", persistencePort.requestedPreviousInspectionSiteId);
+	}
+
+	private static UpsertInspectionCommand commandForSite(String siteId) {
+		return new UpsertInspectionCommand("client-1", "group-1", siteId, null, "C", null, null);
+	}
+
 	private static final class StubInspectionPersistencePort implements InspectionPersistencePort {
 
 		private UpsertInspectionCommand createdCommand;
 		private List<InspectionLocation> activeLocations = List.of(new InspectionLocation("location-1", "Activo"));
 		private int createdDetailsCount;
+		private Integer maxInspectionNumber;
+		private Integer maxInspectionNumberBySite;
+		private Integer createdInspectionNumber;
+		private Integer createdPreviousInspectionNumber;
+		private String requestedPreviousInspectionSiteId;
 
 		@Override
 		public List<InspectionSummary> findAll() {
@@ -112,6 +149,11 @@ class InspectionServiceTest {
 		@Override
 		public Optional<InspectionSummary> findById(String inspectionId) {
 			return Optional.of(summary(inspectionId));
+		}
+
+		@Override
+		public Optional<InspectionSummary> findPreviousBySite(String siteId) {
+			return Optional.empty();
 		}
 
 		@Override
@@ -131,7 +173,13 @@ class InspectionServiceTest {
 
 		@Override
 		public Integer findMaxInspectionNumber() {
-			return null;
+			return maxInspectionNumber;
+		}
+
+		@Override
+		public Integer findMaxInspectionNumberBySite(String siteId) {
+			requestedPreviousInspectionSiteId = siteId;
+			return maxInspectionNumberBySite;
 		}
 
 		@Override
@@ -150,6 +198,8 @@ class InspectionServiceTest {
 			String userId
 		) {
 			this.createdCommand = command;
+			this.createdInspectionNumber = inspectionNumber;
+			this.createdPreviousInspectionNumber = previousInspectionNumber;
 			return "inspection-1";
 		}
 

@@ -58,8 +58,8 @@ public class InspectionController {
 		return inspectionService.findById(inspectionId);
 	}
 
-	@GetMapping("/anterior")
-	public ResponseEntity<InspectionSummary> findPreviousBySite(@RequestParam String siteId) {
+	@GetMapping("/sitios/{siteId}/anterior")
+	public ResponseEntity<InspectionSummary> findPreviousBySite(@PathVariable @NotBlank String siteId) {
 		return inspectionService.findPreviousBySite(siteId)
 			.map(ResponseEntity::ok)
 			.orElseGet(() -> ResponseEntity.noContent().build());
