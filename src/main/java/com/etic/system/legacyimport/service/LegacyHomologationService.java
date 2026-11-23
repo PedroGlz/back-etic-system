@@ -4,6 +4,8 @@ import com.etic.system.legacyimport.model.LegacyHomologation;
 import com.etic.system.legacyimport.parser.LegacyDatasetStore;
 import com.etic.system.legacyimport.repository.LegacyBatchUpsertRepository;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -22,6 +24,8 @@ import java.util.UUID;
 
 @Service
 public class LegacyHomologationService {
+	private static final Logger log=LoggerFactory.getLogger(LegacyHomologationService.class);
+	private static final int RELATION_QUERY_BATCH_SIZE=500;
 	private final LegacyImportService imports;
 	private final LegacyDatasetStore store;
 	private final LegacyBatchUpsertRepository repository;
@@ -37,6 +41,7 @@ public class LegacyHomologationService {
 	}
 
 	public LegacyHomologation.Review review(String id, String createdBy, String requestedInspectionId) {
+		long totalStarted=System.nanoTime();
 		Path staged = imports.stagingDirectory(id, createdBy);
 		Map<String, Map<String, Object>> customers = index(staged, "customers", "CustomerID");
 		Map<String, Map<String, Object>> sites = index(staged, "customerSites", "CustomerSiteID");
@@ -49,10 +54,10 @@ public class LegacyHomologationService {
 		Map<String, Object> site = sites.get(reference.siteId());
 		if (customer == null || site == null) throw new BusinessValidationException("La inspección de referencia no tiene cliente o sitio legacy válido");
 
-		Set<String> locationIds = new LinkedHashSet<>();
-		store.forEach(staged, "inspectionDetails", row -> {
-			if (same(reference.inspectionId(), text(row, "InspectionID"))) add(locationIds, text(row, "LocationID"));
-		});
+		long detailsStarted=System.nanoTime();
+		DetailRelations detailRelations=detailRelations(staged,reference.inspectionId());
+		long detailsReadMs=elapsedMs(detailsStarted);
+		Set<String> locationIds=detailRelations.selectedLocationIds();
 		Map<String, String> legacyPriorityNames = labels(staged, "priorityStatus", "PriorityStatusID", "Name");
 		Map<String, Map<String, Object>> currentPriorities = rowsById(repository.query(
 			"SELECT Id_Tipo_Prioridad, Tipo_Prioridad, Desc_Prioridad, Estatus, is_default FROM tipo_prioridades"), "Id_Tipo_Prioridad");
@@ -67,11 +72,13 @@ public class LegacyHomologationService {
 		List<LegacyHomologation.Priority> inactive = inactiveIds.stream()
 			.map(priorityId -> new LegacyHomologation.Priority(priorityId, legacyPriorityNames.getOrDefault(key(priorityId), priorityId), get(currentPriorities, priorityId) == null))
 			.toList();
-		List<LegacyHomologation.PriorityImpact> impacts=priorityImpacts(staged,reference.inspectionId(),inactiveIds);
+		Map<String,Map<String,Object>> locations=index(staged,"locations","LocationID");
+		ImpactResult impactResult=priorityImpacts(staged,reference.inspectionId(),inactiveIds,locations,detailRelations);
+		List<LegacyHomologation.PriorityImpact> impacts=impactResult.impacts();
 		List<LegacyHomologation.InspectionOption> inspectionOptions=references.stream()
 			.sorted(Comparator.comparing(Reference::number,Comparator.nullsLast(Comparator.reverseOrder())).thenComparing(Reference::inspectionDate,Comparator.nullsLast(Comparator.reverseOrder())))
 			.map(value->new LegacyHomologation.InspectionOption(value.inspectionId(),value.number(),value.inspectionDate(),text(customers.get(value.customerId()),"Name"),text(sites.get(value.siteId()),"SiteName"),false)).toList();
-		return new LegacyHomologation.Review(
+		LegacyHomologation.Review review=new LegacyHomologation.Review(
 			reference.inspectionId(), reference.number(), automatic.inspectionId(), inspectionOptions,
 			reference.customerId(), text(customer, "Name"), reference.siteId(), text(site, "SiteName"), inactive,
 			priorityScopeErrors(impacts), impacts,
@@ -80,6 +87,9 @@ public class LegacyHomologationService {
 			options(repository.query("SELECT Id_Grupo_Sitios id, Grupo label, Id_Cliente parentId FROM grupos_sitios WHERE Estatus='Activo' ORDER BY Grupo"), "parentId"),
 			options(repository.query("SELECT Id_Sitio id, Sitio label, Id_Grupo_Sitios parentId, Id_Cliente clientId FROM sitios WHERE Estatus='Activo' ORDER BY Sitio"), "parentId")
 		);
+		log.info("LEGACY HOMOLOGATION PREPARED - totalMs={} detailsReadMs={} details={} locationsReviewed={} mysqlRelationsMs={} mysqlRelationQueries={} impactedLocations={}",
+			elapsedMs(totalStarted),detailsReadMs,detailRelations.detailCount(),locationIds.size(),impactResult.mysqlMs(),impactResult.queryCount(),impacts.size());
+		return review;
 	}
 
 	public LegacyHomologation.Selection validate(String id, String createdBy, LegacyHomologation.Request request) {
@@ -115,7 +125,8 @@ public class LegacyHomologationService {
 		}
 		validateFinalPriorities(staged,review.inspectionId(),mappings);
 		boolean updateLegalName=false;
-		List<LegacyHomologation.PriorityImpact> impacts=priorityImpacts(staged,review.inspectionId(),mappings.keySet());
+		DetailRelations detailRelations=detailRelations(staged,review.inspectionId());
+		List<LegacyHomologation.PriorityImpact> impacts=priorityImpacts(staged,review.inspectionId(),mappings.keySet(),index(staged,"locations","LocationID"),detailRelations).impacts();
 		if(!impacts.isEmpty()&&!request.forceGlobalPriorityUpdate())throw new BusinessValidationException(priorityScopeErrors(impacts).getFirst());
 		boolean moveLocations=!same(review.siteId(),site.id());
 		List<String> relationshipInspections=relationshipInspectionIds(staged,review.inspectionId(),group,site,moveLocations);
@@ -133,26 +144,39 @@ public class LegacyHomologationService {
 		return result;
 	}
 
-	private List<LegacyHomologation.PriorityImpact> priorityImpacts(Path staged,String inspectionId,Set<String> mappedPriorities){
-		if(mappedPriorities.isEmpty())return List.of();
-		Map<String,Map<String,Object>> locations=index(staged,"locations","LocationID");
+	private ImpactResult priorityImpacts(Path staged,String inspectionId,Set<String> mappedPriorities,Map<String,Map<String,Object>> locations,DetailRelations detailRelations){
+		if(mappedPriorities.isEmpty())return new ImpactResult(List.of(),0,0);
 		Map<String,Map<String,Object>> inspections=index(staged,"inspections","InspectionID");
 		Map<String,String> priorityNames=labels(staged,"priorityStatus","PriorityStatusID","Name");
 		Map<String,String> selectedLocations=new LinkedHashMap<>();
-		store.forEach(staged,"inspectionDetails",row->{if(same(inspectionId,text(row,"InspectionID"))){Map<String,Object> location=get(locations,text(row,"LocationID"));if(location!=null&&mappedPriorities.stream().anyMatch(value->same(value,text(location,"PriorityStatusID"))))selectedLocations.put(text(row,"LocationID"),text(location,"PriorityStatusID"));}});
+		for(String locationId:detailRelations.selectedLocationIds()){Map<String,Object> location=get(locations,locationId);if(location!=null&&mappedPriorities.stream().anyMatch(value->same(value,text(location,"PriorityStatusID"))))selectedLocations.put(locationId,text(location,"PriorityStatusID"));}
+		Map<String,LinkedHashMap<String,Map<String,Object>>> externalByLocation=new LinkedHashMap<>();
+		long mysqlStarted=System.nanoTime();
+		int queryCount=0;
+		List<String> locationIds=new ArrayList<>(selectedLocations.keySet());
+		for(int start=0;start<locationIds.size();start+=RELATION_QUERY_BATCH_SIZE){
+			List<String> block=locationIds.subList(start,Math.min(start+RELATION_QUERY_BATCH_SIZE,locationIds.size()));
+			String placeholders=String.join(",",block.stream().map(ignored->"?").toList());
+			List<Object> arguments=new ArrayList<>(block);arguments.add(inspectionId);
+			List<Map<String,Object>> rows=repository.query("SELECT DISTINCT d.Id_Ubicacion, i.Id_Inspeccion, i.No_Inspeccion, c.Razon_Social, s.Sitio FROM inspecciones_det d JOIN inspecciones i ON i.Id_Inspeccion=d.Id_Inspeccion LEFT JOIN clientes c ON c.Id_Cliente=i.Id_Cliente LEFT JOIN sitios s ON s.Id_Sitio=i.Id_Sitio WHERE d.Id_Ubicacion IN ("+placeholders+") AND i.Id_Inspeccion<>? ORDER BY d.Id_Ubicacion, i.Id_Inspeccion",arguments.toArray());
+			queryCount++;
+			for(Map<String,Object> row:rows){String locationId=text(row,"Id_Ubicacion"),externalInspectionId=text(row,"Id_Inspeccion");if(locationId!=null&&externalInspectionId!=null)externalByLocation.computeIfAbsent(key(locationId),ignored->new LinkedHashMap<>()).putIfAbsent(key(externalInspectionId),row);}
+		}
+		long mysqlMs=elapsedMs(mysqlStarted);
 		List<LegacyHomologation.PriorityImpact> impacts=new ArrayList<>();
 		for(var selected:selectedLocations.entrySet()){
 			Set<String> jobIds=new LinkedHashSet<>();
-			store.forEach(staged,"inspectionDetails",row->{if(same(selected.getKey(),text(row,"LocationID"))&&!same(inspectionId,text(row,"InspectionID")))add(jobIds,text(row,"InspectionID"));});
+			for(String jobInspectionId:detailRelations.inspectionsByLocation().getOrDefault(key(selected.getKey()),new LinkedHashSet<>()))if(!same(inspectionId,jobInspectionId))add(jobIds,jobInspectionId);
 			List<String> jobNames=jobIds.stream().map(value->inspectionLabel(inspections.get(value),value)).toList();
-			List<Map<String,Object>> external=repository.query("SELECT DISTINCT i.Id_Inspeccion, i.No_Inspeccion, c.Razon_Social, s.Sitio FROM inspecciones_det d JOIN inspecciones i ON i.Id_Inspeccion=d.Id_Inspeccion LEFT JOIN clientes c ON c.Id_Cliente=i.Id_Cliente LEFT JOIN sitios s ON s.Id_Sitio=i.Id_Sitio WHERE d.Id_Ubicacion=? AND i.Id_Inspeccion<>? ORDER BY i.Id_Inspeccion",selected.getKey(),inspectionId);
+			List<Map<String,Object>> external=new ArrayList<>(externalByLocation.getOrDefault(key(selected.getKey()),new LinkedHashMap<>()).values());
 			List<String> externalIds=external.stream().map(row->text(row,"Id_Inspeccion")).filter(java.util.Objects::nonNull).toList();
 			List<String> externalNames=external.stream().map(row->inspectionLabel(row,text(row,"Id_Inspeccion"))).toList();
 			Map<String,Object> location=get(locations,selected.getKey());
 			if(!jobIds.isEmpty()||!externalIds.isEmpty())impacts.add(new LegacyHomologation.PriorityImpact(selected.getKey(),text(location,"Name"),selected.getValue(),priorityNames.getOrDefault(key(selected.getValue()),selected.getValue()),List.copyOf(jobIds),jobNames,externalIds,externalNames));
 		}
-		return List.copyOf(impacts);
+		return new ImpactResult(List.copyOf(impacts),mysqlMs,queryCount);
 	}
+	private DetailRelations detailRelations(Path staged,String selectedInspectionId){long[] count={0};Set<String> selectedLocationIds=new LinkedHashSet<>();Map<String,LinkedHashSet<String>> inspectionsByLocation=new LinkedHashMap<>();store.forEach(staged,"inspectionDetails",row->{count[0]++;String locationId=text(row,"LocationID"),inspectionId=text(row,"InspectionID");if(locationId==null||inspectionId==null)return;inspectionsByLocation.computeIfAbsent(key(locationId),ignored->new LinkedHashSet<>()).add(inspectionId);if(same(selectedInspectionId,inspectionId))selectedLocationIds.add(locationId);});return new DetailRelations(count[0],selectedLocationIds,inspectionsByLocation);}
 	private List<String> priorityScopeErrors(List<LegacyHomologation.PriorityImpact> impacts){return impacts.stream().map(impact->{List<String> messages=new ArrayList<>();if(!impact.jobInspectionIds().isEmpty())messages.add("también se utiliza en otra inspección del archivo histórico que estás importando");if(!impact.externalInspectionIds().isEmpty())messages.add("también se utiliza en otra inspección que ya está registrada en ETIC Online");return "La ubicación "+display(impact.locationName(),impact.locationId())+" "+String.join(" y ",messages)+". Si cambias su prioridad, el nuevo valor se reflejará en todas ellas.";}).toList();}
 
 	private String inspectionLabel(Map<String,Object> row,String id){if(row==null)return id;String number=text(row,"InspectionNo");if(number==null)number=text(row,"No_Inspeccion");String customer=text(row,"Razon_Social"),site=text(row,"Sitio");List<String> values=new ArrayList<>();if(number!=null)values.add("Inspección #"+number);if(customer!=null)values.add(customer);if(site!=null)values.add(site);values.add("ID "+id);return String.join(" · ",values);}
@@ -255,9 +279,12 @@ public class LegacyHomologationService {
 	private boolean same(String left,String right){return left!=null&&right!=null&&left.equalsIgnoreCase(right);}
 	private String key(String value){return value.toLowerCase(Locale.ROOT);}
 	private boolean booleanValue(Object value){return value instanceof Boolean bool?bool:value!=null&&(value.toString().equals("1")||value.toString().equalsIgnoreCase("true"));}
+	private long elapsedMs(long started){return (System.nanoTime()-started)/1_000_000L;}
 	private String normalized(String value){return Normalizer.normalize(value.trim().replaceAll("\\s+"," "),Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);}
 	private String deterministicGroupId(String customerId){return UUID.nameUUIDFromBytes(("ETIC:LEGACY:GROUP:"+customerId).getBytes(StandardCharsets.UTF_8)).toString().toUpperCase(Locale.ROOT);}
 	private record GroupSelection(String id,String name,boolean create,boolean updateName,boolean updateCustomer){}
 	private record SiteSelection(String id,String name,boolean update){}
 	private record Reference(String inspectionId,Long number,String inspectionDate,String customerId,String siteId){}
+	private record DetailRelations(long detailCount,Set<String> selectedLocationIds,Map<String,LinkedHashSet<String>> inspectionsByLocation){}
+	private record ImpactResult(List<LegacyHomologation.PriorityImpact> impacts,long mysqlMs,int queryCount){}
 }
