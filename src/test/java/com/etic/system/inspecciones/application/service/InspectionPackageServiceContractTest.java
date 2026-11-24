@@ -4,12 +4,20 @@ import com.etic.system.config.StorageProperties;
 import com.etic.system.shared.domain.exception.BusinessValidationException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.ByteArrayInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipInputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -72,6 +80,126 @@ class InspectionPackageServiceContractTest {
             .thenReturn(List.of(Map.of("Id_Sitio", "site")));
         assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service, "validateRowOwnership", "problemas",
             Map.of("Id_Sitio", "site", "Id_Inspeccion", "old-inspection"), "site", "current-inspection"));
+    }
+
+    @Test
+    void exportReadsZeroTemporalValuesAsNullWithoutDroppingColumnsOrRows() {
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq("problemas"))).thenReturn(1);
+        when(jdbc.queryForList("SHOW COLUMNS FROM problemas")).thenReturn(List.of(
+            Map.of("Field", "Id_Problema", "Type", "char(36)", "Key", "PRI"),
+            Map.of("Field", "Photo_File_Date", "Type", "date", "Key", ""),
+            Map.of("Field", "Ir_File_Date", "Type", "datetime(6)", "Key", ""),
+            Map.of("Field", "Modificado_En", "Type", "timestamp(6)", "Key", "")
+        ));
+        String sql="SELECT `Id_Problema`, CASE WHEN CAST(`Photo_File_Date` AS CHAR) LIKE '0000-00-00%' THEN NULL ELSE CAST(`Photo_File_Date` AS CHAR) END AS `Photo_File_Date`, CASE WHEN CAST(`Ir_File_Date` AS CHAR) LIKE '0000-00-00%' THEN NULL ELSE CAST(`Ir_File_Date` AS CHAR) END AS `Ir_File_Date`, CASE WHEN CAST(`Modificado_En` AS CHAR) LIKE '0000-00-00%' THEN NULL ELSE CAST(`Modificado_En` AS CHAR) END AS `Modificado_En` FROM `problemas` WHERE Id_Sitio = ?";
+        Map<String,Object> zeroDate=new LinkedHashMap<>();
+        zeroDate.put("Id_Problema","problem-zero");zeroDate.put("Photo_File_Date",null);zeroDate.put("Ir_File_Date",null);zeroDate.put("Modificado_En",null);
+        Map<String,Object> validDate=new LinkedHashMap<>();
+        validDate.put("Id_Problema","problem-valid");validDate.put("Photo_File_Date","2026-11-22");validDate.put("Ir_File_Date","2026-11-22 10:15:30.123456");validDate.put("Modificado_En","2026-11-22 10:15:30.654321");
+        Map<String,Object> nullDate=new LinkedHashMap<>();
+        nullDate.put("Id_Problema","problem-null");nullDate.put("Photo_File_Date",null);nullDate.put("Ir_File_Date",null);nullDate.put("Modificado_En",null);
+        when(jdbc.queryForList(eq(sql),any(Object[].class))).thenReturn(List.of(zeroDate,validDate,nullDate));
+
+        List<Map<String,Object>> rows=ReflectionTestUtils.invokeMethod(service,"exportRows","problemas","Id_Sitio = ?",new Object[]{"site"});
+
+        assertEquals(List.of(zeroDate,validDate,nullDate),rows);
+        assertEquals(3,rows.size());
+        assertEquals(List.of("Id_Problema","Photo_File_Date","Ir_File_Date","Modificado_En"),rows.getFirst().keySet().stream().toList());
+        assertEquals(List.of("problem-zero","problem-valid","problem-null"),rows.stream().map(row->row.get("Id_Problema")).toList());
+        assertTrue(rows.getFirst().containsKey("Photo_File_Date"));
+        assertNull(rows.getFirst().get("Photo_File_Date"));
+        assertEquals("2026-11-22",rows.get(1).get("Photo_File_Date"));
+        assertEquals("2026-11-22 10:15:30.123456",rows.get(1).get("Ir_File_Date"));
+        assertEquals("2026-11-22 10:15:30.654321",rows.get(1).get("Modificado_En"));
+        assertNull(rows.get(2).get("Modificado_En"));
+        verify(jdbc).queryForList(eq(sql),any(Object[].class));
+    }
+
+    @Test
+    void exportedZipPreservesContractAndChecksumsWithZeroDatesAsNull(@TempDir Path temporary) throws Exception {
+        JdbcTemplate exportJdbc=mock(JdbcTemplate.class);
+        NamedParameterJdbcTemplate licensingJdbc=mock(NamedParameterJdbcTemplate.class);
+        var templates=mock(com.etic.system.reportes.plantillas.application.ReportTemplateService.class);
+        StorageProperties storage=new StorageProperties();
+        storage.setPath(temporary.toString());
+        InspectionPackageService exportService=new InspectionPackageService(
+            exportJdbc,licensingJdbc,"ETIC_PDM",null,new ObjectMapper(),templates,storage);
+
+        when(exportJdbc.queryForObject(anyString(),eq(Integer.class),anyString())).thenAnswer(invocation ->
+            List.of("export_table_scope","catalogo","inspecciones","sitios","clientes","grupos_sitios","problemas")
+                .contains(invocation.getArgument(2))?1:0);
+        when(exportJdbc.queryForList("SELECT table_name FROM export_table_scope WHERE enabled = 1 AND scope = 'GLOBAL' ORDER BY table_name"))
+            .thenReturn(List.of(Map.of("table_name","catalogo")));
+        when(exportJdbc.queryForList("SELECT * FROM export_table_scope WHERE enabled = 1 AND scope = 'GLOBAL'"))
+            .thenReturn(List.of(Map.of("table_name","catalogo","enabled",1,"scope","GLOBAL")));
+        when(exportJdbc.queryForList(startsWith("SHOW COLUMNS FROM "))).thenAnswer(invocation -> switch ((String)invocation.getArgument(0)) {
+            case "SHOW COLUMNS FROM problemas" -> List.of(
+                Map.of("Field","Id_Problema","Type","char(36)","Key","PRI"),
+                Map.of("Field","Id_Sitio","Type","char(36)","Key",""),
+                Map.of("Field","Photo_File_Date","Type","date","Key",""),
+                Map.of("Field","Ir_File_Date","Type","datetime(6)","Key",""),
+                Map.of("Field","Modificado_En","Type","timestamp(6)","Key",""));
+            case "SHOW COLUMNS FROM inspecciones" -> columns("Id_Inspeccion","No_Inspeccion","Id_Sitio","Id_Cliente","Id_Grupo_Sitios");
+            case "SHOW COLUMNS FROM sitios" -> columns("Id_Sitio","Id_Cliente","Id_Grupo_Sitios");
+            case "SHOW COLUMNS FROM clientes" -> columns("Id_Cliente");
+            case "SHOW COLUMNS FROM grupos_sitios" -> columns("Id_Grupo_Sitios");
+            case "SHOW COLUMNS FROM catalogo" -> columns("Id_Catalogo");
+            default -> List.of();
+        });
+        when(exportJdbc.queryForList(anyString(),any(Object[].class))).thenAnswer(invocation -> {
+            String sql=invocation.getArgument(0);
+            if(sql.contains("FROM `inspecciones` WHERE Id_Inspeccion"))return List.of(Map.of(
+                "Id_Inspeccion","inspection","No_Inspeccion",7,"Id_Sitio","site","Id_Cliente","client","Id_Grupo_Sitios","group"));
+            if(sql.contains("FROM `sitios` WHERE Id_Sitio"))return List.of(Map.of("Id_Sitio","site","Id_Cliente","client","Id_Grupo_Sitios","group"));
+            if(sql.contains("FROM `clientes`"))return List.of(Map.of("Id_Cliente","client"));
+            if(sql.contains("FROM `grupos_sitios`"))return List.of(Map.of("Id_Grupo_Sitios","group"));
+            if(sql.contains("FROM `problemas`")) {
+                Map<String,Object> row=new LinkedHashMap<>();
+                row.put("Id_Problema","problem-zero");row.put("Id_Sitio","site");row.put("Photo_File_Date",null);row.put("Ir_File_Date",null);row.put("Modificado_En",null);
+                return List.of(row);
+            }
+            if(sql.contains("FROM `catalogo`"))return List.of(Map.of("Id_Catalogo","catalog"));
+            return List.of();
+        });
+        when(licensingJdbc.queryForList(anyString(),any(Map.class))).thenReturn(List.of(Map.of(
+            "Id_Usuario","user","Usuario","tester","Nombre","Tester","Password","$2a$10$12345678901234567890123456789012345678901234567890123")));
+        when(templates.filesForExport()).thenReturn(List.of());
+
+        var exported=exportService.exportInspection("inspection","site","test-zero-dates.zip");
+        Map<String,byte[]> entries=readZip(Path.of(exported.absolutePath()));
+        ObjectMapper mapper=new ObjectMapper();
+        Map<?,?> manifest=mapper.readValue(entries.get("manifest.json"),Map.class);
+        Map<?,?> checksums=mapper.readValue(entries.get("checksums.json"),Map.class);
+        Map<?,?> problems=mapper.readValue(entries.get("inspection/problemas.json"),Map.class);
+        Map<?,?> problem=(Map<?,?>)((List<?>)problems.get("rows")).getFirst();
+
+        assertEquals("inspection_export",manifest.get("package_type"));
+        assertEquals(1,problems.get("row_count"));
+        assertEquals(List.of("Id_Problema","Id_Sitio","Photo_File_Date","Ir_File_Date","Modificado_En"),problem.keySet().stream().toList());
+        assertEquals("PROBLEM-ZERO",problem.get("Id_Problema"));
+        assertNull(problem.get("Photo_File_Date"));
+        assertNull(problem.get("Ir_File_Date"));
+        assertNull(problem.get("Modificado_En"));
+        assertEquals(((List<?>)manifest.get("files")).size()+2,entries.size());
+        for(Object path:manifest.get("files") instanceof List<?> files?files:List.of())
+            assertEquals("sha256:"+sha256(entries.get(path.toString())),checksums.get(path));
+        assertEquals("sha256:"+sha256(entries.get("manifest.json")),checksums.get("manifest.json"));
+    }
+
+    private static List<Map<String,Object>> columns(String... names) {
+        return java.util.Arrays.stream(names).map(name->Map.<String,Object>of("Field",name,"Type","varchar(255)","Key",name.startsWith("Id_")?"PRI":"")).toList();
+    }
+
+    private static Map<String,byte[]> readZip(Path path) throws Exception {
+        Map<String,byte[]> entries=new LinkedHashMap<>();
+        try(var zip=new ZipInputStream(new ByteArrayInputStream(Files.readAllBytes(path)))) {
+            for(var entry=zip.getNextEntry();entry!=null;entry=zip.getNextEntry())entries.put(entry.getName(),zip.readAllBytes());
+        }
+        return entries;
+    }
+
+    private static String sha256(byte[] content) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
     }
 
     @Test

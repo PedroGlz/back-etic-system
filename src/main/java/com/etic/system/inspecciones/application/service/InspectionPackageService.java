@@ -123,26 +123,20 @@ public class InspectionPackageService {
 		}
 
 		Map<String, byte[]> entries = new LinkedHashMap<>();
-		Map<String, Object> selectedInspection = singleRow(
-			"SELECT * FROM inspecciones WHERE Id_Inspeccion = ?",
-			inspectionId
-		);
+		Map<String, Object> selectedInspection = exportSingleRow("inspecciones", "Id_Inspeccion = ?", inspectionId);
 		if (selectedInspection == null) {
 			throw new ResourceNotFoundException("No se encontró la inspección seleccionada para exportar");
 		}
 
-		Map<String, Object> selectedSite = singleRow(
-			"SELECT * FROM sitios WHERE Id_Sitio = ?",
-			siteId
-		);
+		Map<String, Object> selectedSite = exportSingleRow("sitios", "Id_Sitio = ?", siteId);
 		if (selectedSite == null) {
 			throw new BusinessValidationException("No se encontró el sitio seleccionado para exportar");
 		}
 
 		String clientId = asString(selectedSite.get("Id_Cliente"));
 		String siteGroupId = asString(selectedSite.get("Id_Grupo_Sitios"));
-		Map<String, Object> selectedClient = singleRow("SELECT * FROM clientes WHERE Id_Cliente = ?", clientId);
-		Map<String, Object> selectedSiteGroup = singleRow("SELECT * FROM grupos_sitios WHERE Id_Grupo_Sitios = ?", siteGroupId);
+		Map<String, Object> selectedClient = exportSingleRow("clientes", "Id_Cliente = ?", clientId);
+		Map<String, Object> selectedSiteGroup = exportSingleRow("grupos_sitios", "Id_Grupo_Sitios = ?", siteGroupId);
 		if (selectedClient == null || selectedSiteGroup == null) {
 			throw new BusinessValidationException("No se encontró el contexto completo del sitio para exportar");
 		}
@@ -155,7 +149,7 @@ public class InspectionPackageService {
 			jdbcTemplate.queryForList("SELECT * FROM export_table_scope WHERE enabled = 1 AND scope = 'GLOBAL'")
 		)));
 		for (String tableName : globalTables) {
-			List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT * FROM " + tableName);
+			List<Map<String, Object>> rows = exportRows(tableName, null);
 			entries.put("globals/" + tableName + ".json", jsonBytes(payload(tableName, "GLOBAL", Map.of(), rows)));
 		}
 		List<Map<String, Object>> offlineUsers = offlineUsers();
@@ -166,7 +160,7 @@ public class InspectionPackageService {
 				"inspecciones",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM inspecciones WHERE Id_Sitio = ?", siteId),
+				exportRows("inspecciones", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -175,7 +169,7 @@ public class InspectionPackageService {
 				"inspecciones_det",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM inspecciones_det WHERE Id_Sitio = ?", siteId),
+				exportRows("inspecciones_det", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -184,7 +178,7 @@ public class InspectionPackageService {
 				"datos_reporte",
 				"INSPECTION",
 				Map.of("Id_Inspeccion", inspectionId),
-				jdbcTemplate.queryForList("SELECT * FROM datos_reporte WHERE Id_Inspeccion = ?", inspectionId),
+				exportRows("datos_reporte", "Id_Inspeccion = ?", inspectionId),
 				List.of()
 			)));
 		}
@@ -193,7 +187,7 @@ public class InspectionPackageService {
 				"problemas",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM problemas WHERE Id_Sitio = ?", siteId),
+				exportRows("problemas", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -202,7 +196,7 @@ public class InspectionPackageService {
 				"linea_base",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM linea_base WHERE Id_Sitio = ?", siteId),
+				exportRows("linea_base", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -211,10 +205,7 @@ public class InspectionPackageService {
 				"historial_problemas",
 				"INSPECTION",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList(
-					"SELECT * FROM historial_problemas WHERE Id_Problema IN (SELECT Id_Problema FROM problemas WHERE Id_Sitio = ?)",
-					siteId
-				),
+				exportRows("historial_problemas", "Id_Problema IN (SELECT Id_Problema FROM problemas WHERE Id_Sitio = ?)", siteId),
 				List.of()
 			)));
 		}
@@ -223,7 +214,7 @@ public class InspectionPackageService {
 				"ubicaciones",
 				"CONTEXT",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM ubicaciones WHERE Id_Sitio = ?", siteId),
+				exportRows("ubicaciones", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -232,7 +223,7 @@ public class InspectionPackageService {
 				"sitio_contactos",
 				"CONTEXT",
 				Map.of("Id_Sitio", siteId),
-				jdbcTemplate.queryForList("SELECT * FROM sitio_contactos WHERE Id_Sitio = ?", siteId),
+				exportRows("sitio_contactos", "Id_Sitio = ?", siteId),
 				List.of()
 			)));
 		}
@@ -941,6 +932,27 @@ public class InspectionPackageService {
 	private Map<String, Object> singleRow(String sql, Object... args) {
 		List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, args);
 		return rows.isEmpty() ? null : rows.getFirst();
+	}
+
+	private Map<String,Object> exportSingleRow(String tableName,String where,Object... args){
+		List<Map<String,Object>> rows=exportRows(tableName,where,args);
+		return rows.isEmpty()?null:rows.getFirst();
+	}
+
+	private List<Map<String,Object>> exportRows(String tableName,String where,Object... args){
+		TableMeta meta=tableMeta(tableName);
+		Set<String> temporalColumns=new LinkedHashSet<>(meta.temporalColumns());
+		String columns=meta.columns().stream().map(column->{
+			String identifier=quoteIdentifier(column);
+			if(!temporalColumns.contains(column))return identifier;
+			return "CASE WHEN CAST("+identifier+" AS CHAR) LIKE '0000-00-00%' THEN NULL ELSE CAST("+identifier+" AS CHAR) END AS "+identifier;
+		}).collect(java.util.stream.Collectors.joining(", "));
+		String sql="SELECT "+columns+" FROM "+quoteIdentifier(tableName)+(where==null||where.isBlank()?"":" WHERE "+where);
+		return jdbcTemplate.queryForList(sql,args);
+	}
+
+	private String quoteIdentifier(String identifier){
+		return "`"+identifier.replace("`","``")+"`";
 	}
 
 	private boolean tableExists(String tableName) {
