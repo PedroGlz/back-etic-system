@@ -327,8 +327,10 @@ public class InspectionPackageService {
 		validateChecksums(zipEntries, checksums, filesInManifest);
 
 		List<String> processedPaths = new ArrayList<>();
+		List<String> configuredGlobalTables = configuredGlobalExportTables();
+		Map<String, TableMeta> tableMetadata = new HashMap<>();
 		for (String path : filesInManifest) {
-			if (!isAllowedImportPath(path)) {
+			if (!isAllowedImportPath(path, configuredGlobalTables)) {
 				throw new BusinessValidationException("El paquete contiene un archivo no permitido: " + path);
 			}
 			if (isTemplatePath(path)) {
@@ -346,8 +348,9 @@ public class InspectionPackageService {
             if (!tableExists(tableName)) {
                 throw new BusinessValidationException("Falta la tabla requerida por el paquete: " + tableName);
             }
-            applyPayload(tableName, payload, UPSERT_DELETE.equals(deltaMode) && isDeleteEnabled(path),
-                ALLOWED_IMPORT_PATHS.contains(path) ? expectedSiteId : null, expectedInspectionId);
+            applyPayload(tableName, payload, UPSERT_DELETE.equals(deltaMode) && isDeleteEnabled(path, configuredGlobalTables),
+                ALLOWED_IMPORT_PATHS.contains(path) ? expectedSiteId : null, expectedInspectionId,
+                tableMetadata.computeIfAbsent(tableName, this::tableMeta));
 			processedPaths.add(path);
 		}
 
@@ -527,24 +530,23 @@ public class InspectionPackageService {
 		cell.setCellValue(formatValue(value));
 	}
 
-	private void applyPayload(String tableName, Map<String, Object> payload, boolean deleteEnabled, String siteId, String inspectionId) {
-		TableMeta meta = tableMeta(tableName);
+	private void applyPayload(String tableName, Map<String, Object> payload, boolean deleteEnabled, String siteId, String inspectionId, TableMeta meta) {
 		List<Map<String, Object>> rows = objectMapper.convertValue(payload.getOrDefault("rows", List.of()), new TypeReference<>() {});
 		List<Map<String, Object>> deletedKeys = objectMapper.convertValue(payload.getOrDefault("deleted_keys", List.of()), new TypeReference<>() {});
 		for (Map<String, Object> row : rows) {
-			if (siteId != null) validateRowSite(tableName, meta, row, siteId, inspectionId);
-            upsertRow(tableName, meta, row);
+			Map<String, Object> filtered = filterColumns(tableName, row, meta);
+			Boolean exists = siteId == null ? null : validateRowSite(tableName, meta, filtered, siteId, inspectionId);
+			upsertRow(tableName, meta, filtered, exists);
 		}
 		if (deleteEnabled) {
 			for (Map<String, Object> deletedKey : deletedKeys) {
-				if (siteId != null) validateRowSite(tableName, meta, deletedKey, siteId, inspectionId);
+				if (siteId != null) validateRowSite(tableName, meta, filterColumns(tableName, deletedKey, meta), siteId, inspectionId);
                 deleteRow(tableName, meta, deletedKey);
 			}
 		}
 	}
 
-	private void upsertRow(String tableName, TableMeta meta, Map<String, Object> payload) {
-		Map<String, Object> filtered = filterColumns(tableName, payload, meta);
+	private void upsertRow(String tableName, TableMeta meta, Map<String, Object> filtered, Boolean knownExists) {
 		if (filtered.isEmpty()) {
 			return;
 		}
@@ -553,7 +555,7 @@ public class InspectionPackageService {
 			throw new BusinessValidationException("Falta la llave primaria en una fila del paquete para " + tableName);
 		}
 
-		boolean exists = existsByPrimaryKeys(tableName, meta.primaryKeys, primaryKeyValues);
+		boolean exists = knownExists != null ? knownExists : existsByPrimaryKeys(tableName, meta.primaryKeys, primaryKeyValues);
 		if (exists) {
 			List<String> assignments = filtered.keySet().stream()
 				.filter(column -> !meta.primaryKeys.contains(column))
@@ -619,11 +621,10 @@ public class InspectionPackageService {
 
 	private Map<String, Object> filterColumns(String tableName, Map<String, Object> payload, TableMeta meta) {
 		Map<String, Object> filtered = new LinkedHashMap<>();
-		Map<String, String> canonicalColumns = new HashMap<>();
-		meta.columns.forEach(column -> canonicalColumns.put(column.toLowerCase(Locale.ROOT), column));
 		List<String> unsupported = new ArrayList<>();
+		boolean rejectUnsupported = ALLOWED_IMPORT_PATHS.stream().anyMatch(path -> path.endsWith("/" + tableName + ".json"));
 		for (Map.Entry<String, Object> entry : payload.entrySet()) {
-			String column = canonicalColumns.get(entry.getKey().toLowerCase(Locale.ROOT));
+			String column = meta.canonicalColumns.get(entry.getKey().toLowerCase(Locale.ROOT));
 			if (column != null) {
 				if (meta.temporalColumns.contains(column) && entry.getValue() instanceof String text && text.isBlank()) {
                     throw new BusinessValidationException(tableName + "." + column
@@ -633,7 +634,7 @@ public class InspectionPackageService {
 					? DateValueNormalizer.normalizeDatabaseDateValue(entry.getValue())
 					: entry.getValue();
 				filtered.put(column, value);
-			} else if (ALLOWED_IMPORT_PATHS.stream().anyMatch(path -> path.endsWith("/" + tableName + ".json"))) {
+			} else if (rejectUnsupported) {
 				unsupported.add(entry.getKey());
 			}
 		}
@@ -642,8 +643,7 @@ public class InspectionPackageService {
 		}
 		return filtered;
 	}
-    private void validateRowSite(String table, TableMeta meta, Map<String, Object> row, String siteId, String inspectionId) {
-        Map<String, Object> filtered = filterColumns(table, row, meta);
+    private boolean validateRowSite(String table, TableMeta meta, Map<String, Object> filtered, String siteId, String inspectionId) {
         Map<String, Object> keys = primaryKeyValues(meta, filtered);
         if (meta.primaryKeys.isEmpty() || keys.size() != meta.primaryKeys.size() || keys.containsValue(null)) {
             throw new BusinessValidationException("Falta la llave primaria en una fila del paquete para " + table);
@@ -656,6 +656,7 @@ public class InspectionPackageService {
         if (existing != null) merged.putAll(existing);
         merged.putAll(filtered);
         validateRowOwnership(table, merged, siteId, inspectionId);
+		return existing != null;
     }
 
     private void validateRowOwnership(String table, Map<String, Object> row, String siteId, String inspectionId) {
@@ -739,17 +740,24 @@ public class InspectionPackageService {
 	}
 
 	private TableMeta tableMeta(String tableName) {
-		if (!tableExists(tableName)) {
+		List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
+			SELECT column_name AS Field, column_type AS Type, column_key AS `Key`
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ?
+			ORDER BY ordinal_position
+			""", tableName);
+		if (rows.isEmpty()) {
 			throw new BusinessValidationException("La tabla " + tableName + " no existe en el backend actual");
 		}
-		List<Map<String, Object>> rows = jdbcTemplate.queryForList("SHOW COLUMNS FROM " + tableName);
 		List<String> columns = new ArrayList<>();
-		List<String> temporalColumns = new ArrayList<>();
+		Set<String> temporalColumns = new LinkedHashSet<>();
 		List<String> primaryKeys = new ArrayList<>();
+		Map<String, String> canonicalColumns = new HashMap<>();
 		for (Map<String, Object> row : rows) {
 			String field = Objects.toString(row.get("Field"), "");
 			if (!field.isBlank()) {
 				columns.add(field);
+				canonicalColumns.put(field.toLowerCase(Locale.ROOT), field);
 			}
 			String type = Objects.toString(row.get("Type"), "").toLowerCase(Locale.ROOT);
 			if (type.contains("date") || type.contains("time")) {
@@ -759,7 +767,7 @@ public class InspectionPackageService {
 				primaryKeys.add(field);
 			}
 		}
-		return new TableMeta(columns, temporalColumns, primaryKeys);
+		return new TableMeta(columns, temporalColumns, primaryKeys, canonicalColumns);
 	}
 
 	private Map<String, byte[]> readZipEntries(MultipartFile file) {
@@ -808,18 +816,18 @@ public class InspectionPackageService {
 		}
 	}
 
-	private boolean isAllowedImportPath(String path) {
+	private boolean isAllowedImportPath(String path, List<String> configuredGlobalTables) {
 		return ALLOWED_IMPORT_PATHS.contains(path)
 			|| "globals/export_table_scope.json".equals(path)
 			|| isTemplatePath(path)
 			|| (!"globals/usuarios.json".equalsIgnoreCase(path)
-				&& configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
+				&& configuredGlobalTables.stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
 	}
 
-	private boolean isDeleteEnabled(String path) {
+	private boolean isDeleteEnabled(String path, List<String> configuredGlobalTables) {
 		return DELETE_ENABLED_PATHS.contains(path)
 			|| (!"globals/usuarios.json".equalsIgnoreCase(path)
-				&& configuredGlobalExportTables().stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
+				&& configuredGlobalTables.stream().anyMatch(table -> ("globals/" + table + ".json").equals(path)));
 	}
 
 	private boolean isTemplatePath(String path) {
@@ -895,6 +903,7 @@ public class InspectionPackageService {
 				throw new BusinessValidationException("License Control contiene un usuario offline con identidad o hash inválido");
 			}
 		}
+		normalizeExportRows(users);
 		return users;
 	}
 
@@ -904,8 +913,13 @@ public class InspectionPackageService {
 		payload.put("scope", scope);
 		payload.put("filters", normalizeExportRow(filters));
 		payload.put("row_count", rows.size());
-		payload.put("rows", rows.stream().map(this::normalizeExportRow).toList());
+		payload.put("rows", rows);
 		return payload;
+	}
+
+	private void normalizeExportRows(List<Map<String, Object>> rows) {
+		rows.forEach(row -> row.replaceAll((column, value) ->
+			isIdentifierColumn(column) && value instanceof String text ? text.toUpperCase(Locale.ROOT) : value));
 	}
 
 	private Map<String,Object> normalizeExportRow(Map<String,Object> source){
@@ -948,7 +962,9 @@ public class InspectionPackageService {
 			return "CASE WHEN CAST("+identifier+" AS CHAR) LIKE '0000-00-00%' THEN NULL ELSE CAST("+identifier+" AS CHAR) END AS "+identifier;
 		}).collect(java.util.stream.Collectors.joining(", "));
 		String sql="SELECT "+columns+" FROM "+quoteIdentifier(tableName)+(where==null||where.isBlank()?"":" WHERE "+where);
-		return jdbcTemplate.queryForList(sql,args);
+		List<Map<String,Object>> rows=jdbcTemplate.queryForList(sql,args);
+		normalizeExportRows(rows);
+		return rows;
 	}
 
 	private String quoteIdentifier(String identifier){
@@ -1045,7 +1061,7 @@ public class InspectionPackageService {
 		return Objects.toString(value, "");
 	}
 
-	private record TableMeta(List<String> columns, List<String> temporalColumns, List<String> primaryKeys) {
+	private record TableMeta(List<String> columns, Set<String> temporalColumns, List<String> primaryKeys, Map<String, String> canonicalColumns) {
 	}
 
 	private record ReportReference(String header, String table, String idColumn, String labelColumn) {

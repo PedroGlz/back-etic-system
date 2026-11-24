@@ -173,11 +173,18 @@ public class LegacyEtlExecutionService {
 	private void applyRelatedSiteConsistency(LegacyHomologation.Selection selection){
 		java.util.Set<String> inspectionIds=new java.util.LinkedHashSet<>();inspectionIds.add(selection.inspectionId());
 		java.util.Set<String> locationIds=new java.util.LinkedHashSet<>();for(String inspectionId:List.copyOf(inspectionIds))batchRepository.query("SELECT DISTINCT Id_Ubicacion FROM inspecciones_det WHERE Id_Inspeccion=?",inspectionId).forEach(row->{Object value=row.get("Id_Ubicacion");if(value!=null)locationIds.add(value.toString());});
-		for(String locationId:locationIds)batchRepository.query("SELECT DISTINCT Id_Inspeccion FROM inspecciones_det WHERE Id_Ubicacion=?",locationId).forEach(row->{Object value=row.get("Id_Inspeccion");if(value!=null)inspectionIds.add(value.toString());});
+		queryByIds("Id_Inspeccion","inspecciones_det","Id_Ubicacion",locationIds,true).forEach(row->{Object value=row.get("Id_Inspeccion");if(value!=null)inspectionIds.add(value.toString());});
 		batchRepository.updateDerived("ubicaciones","Id_Ubicacion",locationIds.stream().map(locationId->Map.<String,Object>of("Id_Ubicacion",locationId,"Id_Sitio",selection.siteId())).toList());
 		batchRepository.updateDerived("inspecciones","Id_Inspeccion",inspectionIds.stream().map(inspectionId->Map.<String,Object>of("Id_Inspeccion",inspectionId,"Id_Cliente",selection.customerId(),"Id_Grupo_Sitios",selection.siteGroupId(),"Id_Sitio",selection.siteId())).toList());
-		List<Map<String,Object>> details=new ArrayList<>(),problems=new ArrayList<>(),baselines=new ArrayList<>();for(String inspectionId:inspectionIds){batchRepository.query("SELECT Id_Inspeccion_Det FROM inspecciones_det WHERE Id_Inspeccion=?",inspectionId).forEach(row->details.add(Map.of("Id_Inspeccion_Det",row.get("Id_Inspeccion_Det"),"Id_Sitio",selection.siteId())));batchRepository.query("SELECT Id_Problema FROM problemas WHERE Id_Inspeccion=?",inspectionId).forEach(row->problems.add(Map.of("Id_Problema",row.get("Id_Problema"),"Id_Sitio",selection.siteId())));batchRepository.query("SELECT Id_Linea_Base FROM linea_base WHERE Id_Inspeccion=?",inspectionId).forEach(row->baselines.add(Map.of("Id_Linea_Base",row.get("Id_Linea_Base"),"Id_Sitio",selection.siteId())));}
+		List<Map<String,Object>> details=queryByIds("Id_Inspeccion_Det","inspecciones_det","Id_Inspeccion",inspectionIds,false).stream().map(row->Map.<String,Object>of("Id_Inspeccion_Det",row.get("Id_Inspeccion_Det"),"Id_Sitio",selection.siteId())).toList();
+		List<Map<String,Object>> problems=queryByIds("Id_Problema","problemas","Id_Inspeccion",inspectionIds,false).stream().map(row->Map.<String,Object>of("Id_Problema",row.get("Id_Problema"),"Id_Sitio",selection.siteId())).toList();
+		List<Map<String,Object>> baselines=queryByIds("Id_Linea_Base","linea_base","Id_Inspeccion",inspectionIds,false).stream().map(row->Map.<String,Object>of("Id_Linea_Base",row.get("Id_Linea_Base"),"Id_Sitio",selection.siteId())).toList();
 		batchRepository.updateDerived("inspecciones_det","Id_Inspeccion_Det",details);batchRepository.updateDerived("problemas","Id_Problema",problems);batchRepository.updateDerived("linea_base","Id_Linea_Base",baselines);
+	}
+	private List<Map<String,Object>> queryByIds(String selectedColumn,String table,String filterColumn,java.util.Collection<String> ids,boolean distinct){
+		List<String> values=new ArrayList<>(ids);List<Map<String,Object>> rows=new ArrayList<>();
+		for(int start=0;start<values.size();start+=500){List<String> block=values.subList(start,Math.min(start+500,values.size()));String placeholders=String.join(",",block.stream().map(ignored->"?").toList());rows.addAll(batchRepository.query("SELECT "+(distinct?"DISTINCT ":"")+selectedColumn+" FROM "+table+" WHERE "+filterColumn+" IN ("+placeholders+")",block.toArray()));}
+		return rows;
 	}
 
 	private void phase(String id,String phase,int progress,LegacyEtlContext context,LegacyEtlReportBuilder report,Runnable action){

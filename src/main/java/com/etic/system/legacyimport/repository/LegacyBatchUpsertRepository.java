@@ -120,7 +120,24 @@ public class LegacyBatchUpsertRepository {
 	}
 
 	private Set<String> existingKeyStrings(String table,String key,List<Object> keys){Set<String> result=new HashSet<>();if(keys.isEmpty())return result;for(Object value:existingKeys(table,key,keys))result.add(normalizedKey(value));return result;}
-	private void verifyDerivedRows(String table,String key,List<Map<String,Object>> rows){for(Map<String,Object> expected:rows){List<String> columns=List.copyOf(expected.keySet());String sql="SELECT "+String.join(",",columns)+" FROM "+table+" WHERE "+key+"=?";List<Map<String,Object>> matches=jdbc.queryForList(sql,expected.get(key));if(matches.isEmpty())throw new IllegalStateException("MySQL no encontró el registro actualizado en "+table);Map<String,Object> actual=matches.getFirst();for(String column:columns)if(!sameDerivedValue(column,expected.get(column),actual.get(column)))throw new IllegalStateException("MySQL no conservó el valor esperado de "+column+" en "+table);}}
+	private void verifyDerivedRows(String table,String key,List<Map<String,Object>> rows){
+		for(int start=0;start<rows.size();){
+			List<String> columns=List.copyOf(rows.get(start).keySet());
+			int end=start+1;
+			while(end<rows.size()&&end-start<500&&List.copyOf(rows.get(end).keySet()).equals(columns))end++;
+			List<Map<String,Object>> block=rows.subList(start,end);
+			String placeholders=String.join(",",block.stream().map(ignored->"?").toList());
+			Map<String,Map<String,Object>> actualByKey=new HashMap<>();
+			for(Map<String,Object> actual:jdbc.queryForList("SELECT "+String.join(",",columns)+" FROM "+table+" WHERE "+key+" IN ("+placeholders+")",block.stream().map(row->row.get(key)).toArray()))
+				actualByKey.put(normalizedKey(actual.get(key)),actual);
+			for(Map<String,Object> expected:block){
+				Map<String,Object> actual=actualByKey.get(normalizedKey(expected.get(key)));
+				if(actual==null)throw new IllegalStateException("MySQL no encontró el registro actualizado en "+table);
+				for(String column:columns)if(!sameDerivedValue(column,expected.get(column),actual.get(column)))throw new IllegalStateException("MySQL no conservó el valor esperado de "+column+" en "+table);
+			}
+			start=end;
+		}
+	}
 	private boolean sameDerivedValues(Map<String,Object> left,Map<String,Object> right,String key){Set<String> columns=new HashSet<>(left.keySet());columns.addAll(right.keySet());for(String column:columns)if(!column.equalsIgnoreCase(key)&&!sameDerivedValue(column,left.get(column),right.get(column)))return false;return true;}
 	private boolean sameDerivedValue(String column,Object expected,Object actual){if(expected==null||actual==null)return expected==actual;if(column.toLowerCase(Locale.ROOT).startsWith("id_"))return normalizedKey(expected).equals(normalizedKey(actual));if(expected instanceof Number&&actual instanceof Number)return new java.math.BigDecimal(expected.toString()).compareTo(new java.math.BigDecimal(actual.toString()))==0;return expected.toString().trim().equals(actual.toString().trim());}
 	private Map<String,ExistingRow> existingRows(String table,String key,TableMetadata metadata,List<Object> keys){Map<String,ExistingRow> result=new HashMap<>();String modified=metadata.canonical("Fecha_Mod"),created=metadata.canonical("Fecha_Creacion");for(int start=0;start<keys.size();start+=500){List<Object> block=keys.subList(start,Math.min(start+500,keys.size()));String placeholders=String.join(",",block.stream().map(ignored->"?").toList());String columns=key+(modified==null?"":","+modified)+(created==null?"":","+created);for(Map<String,Object> row:jdbc.queryForList("SELECT "+columns+" FROM "+table+" WHERE "+key+" IN ("+placeholders+")",block.toArray())){LocalDateTime mod=modified==null?null:date(row.get(modified));LocalDateTime creation=created==null?null:date(row.get(created));result.put(normalizedKey(row.get(key)),new ExistingRow(mod!=null?mod:creation));}}return result;}
